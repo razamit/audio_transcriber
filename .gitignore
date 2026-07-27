@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Transcripts are written next to their source audio, but ignore any that
+# land here during testing.
+*.txt
+!requirements.txt
