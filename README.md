@@ -5,9 +5,15 @@ script that runs [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/m
 against the [ivrit-ai](https://huggingface.co/ivrit-ai) Whisper large-v3
 finetune. Nothing is uploaded — transcription runs entirely on-device.
 
+> **Apple Silicon only.** This runs on M-series Macs and nowhere else. It is
+> built on Apple's MLX framework, which is Metal-backed and has no CPU or CUDA
+> fallback, so it will not run on an Intel Mac, on Linux, or on Windows —
+> including under Docker or a VM on those hosts.
+
 ## Requirements
 
-- Apple Silicon Mac (MLX is Metal-only; this will not run on Intel or Linux)
+- **Apple Silicon Mac (M1 or newer).** Hard requirement, not a recommendation —
+  see the note above.
 - Python 3.10 or newer
 - `ffmpeg` on your `PATH`, used by Whisper to decode audio:
   ```
