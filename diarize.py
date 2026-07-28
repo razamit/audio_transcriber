@@ -33,6 +33,17 @@ DIARIZATION_REPO = "pyannote/speaker-diarization-community-1"
 PARAGRAPH_GAP_SECONDS = 2.0
 UNKNOWN_SPEAKER = "UNKNOWN"
 
+# pyannote.audio 4.x bundles OpenTelemetry metrics that are enabled by default
+# and POST to https://otel.pyannote.ai/v1/traces on every pipeline run. No
+# audio, text or filename is transmitted — it is the model id, library
+# version, a random session id, the audio duration and the speaker-count hint.
+# This is still a local-first tool, so opt out by default. Export
+# PYANNOTE_METRICS_ENABLED=true to send them anyway.
+#
+# setdefault, and before pyannote is imported: the package reads this variable
+# at import time and falls back to its bundled config.yaml if it is unset.
+os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
+
 TOKEN_HELP = f"""\
 A HuggingFace access token is required: the pyannote models are gated.
 

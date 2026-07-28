@@ -86,6 +86,30 @@ that is unpleasant to read for anything longer than a minute.
   cost of per-word cross-attention alignment on every segment — a meaningful
   slowdown on long files.
 
+## What runs locally
+
+All transcription and diarization runs on your Mac. Audio is never uploaded,
+and there is no inference API involved.
+
+Network access is needed **once**, to download model weights from HuggingFace
+into `~/.cache/huggingface`. After that both scripts run fully offline — you
+can verify this yourself by cutting the network, or by forcing it:
+
+```
+HF_HUB_OFFLINE=1 .venv/bin/python transcribe.py
+```
+
+The HuggingFace token that `diarize.py` requires is a **download credential**,
+not an API key. It authenticates the one-time fetch of gated model files. It is
+not used at inference time and nothing is metered or billed.
+
+One caveat worth knowing: pyannote.audio 4.x bundles OpenTelemetry metrics
+that are **enabled by default** and post to `https://otel.pyannote.ai` on every
+run. No audio, text or filename is sent — it is the model id, library version,
+a random session id, the audio duration and the speaker-count hint. `diarize.py`
+opts out of this by setting `PYANNOTE_METRICS_ENABLED=false` before importing
+pyannote. Export `PYANNOTE_METRICS_ENABLED=true` if you would rather send them.
+
 ## Speaker labels (who said what)
 
 `diarize.py` is an optional second script that adds speaker attribution.
