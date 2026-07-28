@@ -17,3 +17,17 @@ python3 -m venv .venv
 echo
 echo "Done. Run the transcriber with:"
 echo "    .venv/bin/python transcribe.py"
+
+if [ "${1:-}" = "--with-diarization" ]; then
+    echo
+    echo "Installing speaker diarization extras (~2GB) ..."
+    .venv/bin/pip install -r requirements-diarize.txt
+    echo
+    echo "Diarization installed. It needs a HuggingFace token for the gated"
+    echo "pyannote models — see the README. Then run:"
+    echo "    .venv/bin/python diarize.py"
+else
+    echo
+    echo "For speaker labels (who said what), re-run as:"
+    echo "    ./setup.sh --with-diarization"
+fi

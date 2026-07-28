@@ -86,11 +86,74 @@ that is unpleasant to read for anything longer than a minute.
   cost of per-word cross-attention alignment on every segment — a meaningful
   slowdown on long files.
 
+## Speaker labels (who said what)
+
+`diarize.py` is an optional second script that adds speaker attribution.
+Whisper cannot do this alone — it has no concept of speakers — so this runs
+[pyannote.audio](https://github.com/pyannote/pyannote-audio) to find *who spoke
+when*, runs Whisper to find *what was said*, and merges the two by timestamp.
+Each Whisper segment is assigned to whichever speaker overlaps it most.
+
+### Extra setup
+
+```
+./setup.sh --with-diarization
+```
+
+The pyannote models are gated, so a HuggingFace token is required:
+
+1. Create a free account at <https://huggingface.co/join>
+2. Accept the conditions on **both** model pages:
+   - <https://hf.co/pyannote/speaker-diarization-community-1>
+   - <https://hf.co/pyannote/segmentation-3.0>
+3. Create a **Read** token at <https://hf.co/settings/tokens>
+4. Store it once: `.venv/bin/hf auth login`
+
+### Usage
+
+```
+.venv/bin/python diarize.py
+```
+
+It prompts for the audio path, then for a speaker count — leave it blank to
+auto-detect, or enter a number if you know it. Supplying the count is the
+single biggest accuracy lever. Output goes to `<name>_speakers.txt`:
+
+```
+2 speaker(s) detected:
+  SPEAKER_00  00:00:04  (61%)
+  SPEAKER_01  00:00:02  (39%)
+
+[00:00:00] SPEAKER_00: שלום, מה שלומך היום?
+
+[00:00:04] SPEAKER_01: אני בסדר גמור, תודה ששאלת.
+```
+
+### Limitations
+
+- **Speakers are anonymous.** You get `SPEAKER_00`, `SPEAKER_01` — the model
+  separates voices, it cannot name them. Map them to real names yourself.
+- **Crosstalk degrades it.** When two people talk over each other, the segment
+  is attributed to whoever overlaps more; the other person's words are still
+  in the text but under the wrong label.
+- **Boundaries are approximate.** Whisper's segments and pyannote's turns are
+  produced independently, so a speaker change mid-Whisper-segment cannot be
+  split — that whole segment gets one label.
+- Segments matching no speaker turn are labelled `UNKNOWN` rather than being
+  silently dropped or guessed at.
+- It roughly doubles the runtime, since the audio is processed by two models.
+
 ## Scope
 
-Transcription only. No diarization, no summarization, no API calls, no CLI
-flags. There is no CI: the test path needs Apple Silicon hardware and a 3GB
-model download, which no hosted runner provides.
+Transcription and optional speaker attribution. No summarization, no API
+calls, no CLI flags — both scripts are interactive prompts only.
+
+Because `language="he"` is forced, non-Hebrew speech in the audio is not
+transcribed in its own language; Whisper renders it into Hebrew. This is a
+Hebrew tool, not a multilingual one.
+
+There is no CI: the test path needs Apple Silicon hardware and multi-GB gated
+model downloads, which no hosted runner provides.
 
 ## License
 

@@ -3,6 +3,6 @@ __pycache__/
 *.pyc
 
 # Transcripts are written next to their source audio, but ignore any that
-# land here during testing.
+# land here during testing. Requirements files are the deliberate exception.
 *.txt
-!requirements.txt
+!requirements*.txt

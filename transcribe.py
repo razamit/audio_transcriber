@@ -95,10 +95,10 @@ def prompt_for_audio_path():
 # Output path and formatting
 # --------------------------------------------------------------------------
 
-def build_output_path(audio_path):
-    """`<stem>.txt` next to the input, suffixed `_2`, `_3`... if taken."""
+def build_output_path(audio_path, suffix=""):
+    """`<stem><suffix>.txt` next to the input, bumped `_2`, `_3`... if taken."""
     directory = os.path.dirname(audio_path)
-    stem = os.path.splitext(os.path.basename(audio_path))[0]
+    stem = os.path.splitext(os.path.basename(audio_path))[0] + suffix
 
     candidate = os.path.join(directory, f"{stem}.txt")
     counter = 2
@@ -158,15 +158,48 @@ def require_ffmpeg():
         )
 
 
-def model_is_cached():
-    """True if the model repo already looks present in the HuggingFace cache."""
+def hf_cache_root():
+    """Root of the HuggingFace hub cache, honoring the usual env overrides."""
     cache_root = os.environ.get("HF_HUB_CACHE")
-    if not cache_root:
-        hf_home = os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
-        cache_root = os.path.join(hf_home, "hub")
+    if cache_root:
+        return cache_root
+    hf_home = os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
+    return os.path.join(hf_home, "hub")
 
-    folder = "models--" + MODEL_REPO.replace("/", "--")
-    return os.path.isdir(os.path.join(cache_root, folder))
+
+def model_is_cached(repo=MODEL_REPO):
+    """True if the given repo already looks present in the HuggingFace cache."""
+    folder = "models--" + repo.replace("/", "--")
+    return os.path.isdir(os.path.join(hf_cache_root(), folder))
+
+
+def announce_first_run_download():
+    """Warn about the one-time model download so a slow start isn't a mystery."""
+    if not model_is_cached():
+        print(
+            f"First run: downloading {MODEL_REPO} (~3GB) into the HuggingFace "
+            "cache. This takes a few minutes and only happens once."
+        )
+
+
+def run_transcription(audio_path):
+    """Transcribe with mlx-whisper.
+
+    The kwargs are deliberate: language="he" is mandatory because the
+    finetune's language detection was degraded during training, and
+    condition_on_previous_text=False avoids the repetition-loop failure mode
+    on long recordings. See the README before changing them.
+    """
+    import mlx_whisper
+
+    return mlx_whisper.transcribe(
+        audio_path,
+        path_or_hf_repo=MODEL_REPO,
+        language=LANGUAGE,
+        verbose=True,
+        condition_on_previous_text=False,
+        hallucination_silence_threshold=2.0,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -179,26 +212,13 @@ def main():
     audio_path = prompt_for_audio_path()
     output_path = build_output_path(audio_path)
 
-    if not model_is_cached():
-        print(
-            f"First run: downloading {MODEL_REPO} (~3GB) into the HuggingFace "
-            "cache. This takes a few minutes and only happens once."
-        )
+    announce_first_run_download()
 
     print(f"Transcribing {audio_path} ...")
     started = time.monotonic()
 
     try:
-        import mlx_whisper
-
-        result = mlx_whisper.transcribe(
-            audio_path,
-            path_or_hf_repo=MODEL_REPO,
-            language=LANGUAGE,
-            verbose=True,
-            condition_on_previous_text=False,
-            hallucination_silence_threshold=2.0,
-        )
+        result = run_transcription(audio_path)
     except Exception:
         print("\nTranscription failed:\n", file=sys.stderr)
         traceback.print_exc()
