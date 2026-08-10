@@ -132,9 +132,10 @@ can verify this yourself by cutting the network, or by forcing it:
 HF_HUB_OFFLINE=1 .venv/bin/python transcribe.py
 ```
 
-The HuggingFace token that `diarize.py` requires is a **download credential**,
-not an API key. It authenticates the one-time fetch of gated model files. It is
-not used at inference time and nothing is metered or billed.
+Neither script requires a HuggingFace account. If you happen to have a token
+configured, `diarize.py` passes it along purely to get the higher rate limit on
+downloads — it is a **download credential**, never an API key, is not used at
+inference time, and nothing is metered or billed.
 
 One caveat worth knowing: pyannote.audio 4.x bundles OpenTelemetry metrics
 that are **enabled by default** and post to `https://otel.pyannote.ai` on every
@@ -157,14 +158,37 @@ Each Whisper segment is assigned to whichever speaker overlaps it most.
 ./setup.sh --with-diarization
 ```
 
-The pyannote models are gated, so a HuggingFace token is required:
+That is all of it. No account, no token, no terms to accept — the diarization
+model (~33 MB) downloads on first run like any other dependency.
+
+This uses [`pyannote-community/speaker-diarization-community-1`](https://huggingface.co/pyannote-community/speaker-diarization-community-1),
+an **ungated re-upload** of pyannote's Community-1 pipeline, pinned to a fixed
+revision. pyannote's own copy is identical in function but gated behind a
+HuggingFace account, which would put a signup between you and a tool that
+otherwise needs no accounts at all.
+
+The tradeoff is provenance, and it is worth stating plainly: the mirror is
+uploaded by a third party, not the pyannote org. Every filename and byte size
+matches the official repo's listing, but HuggingFace does not serve content
+hashes for a gated repo without auth, so the weights **cannot be verified as
+byte-identical to upstream**. Pinning `DIARIZATION_REVISION` is the mitigation —
+the bytes are fixed at one reviewed commit and cannot change under a later run.
+
+If you would rather have first-party weights, set both constants at the top of
+`diarize.py` back to the official repo and follow its gated flow:
+
+```python
+DIARIZATION_REPO = "pyannote/speaker-diarization-community-1"
+DIARIZATION_REVISION = None
+```
 
 1. Create a free account at <https://huggingface.co/join>
-2. Accept the conditions on **both** model pages:
-   - <https://hf.co/pyannote/speaker-diarization-community-1>
-   - <https://hf.co/pyannote/segmentation-3.0>
+2. Accept the conditions at <https://hf.co/pyannote/speaker-diarization-community-1>
 3. Create a **Read** token at <https://hf.co/settings/tokens>
 4. Store it once: `.venv/bin/hf auth login`
+
+`diarize.py` already passes a token when one is configured, so nothing else
+changes.
 
 ### Usage
 
@@ -198,6 +222,10 @@ the language choice only affects the Whisper half of the merge. Output goes to
 - **Boundaries are approximate.** Whisper's segments and pyannote's turns are
   produced independently, so a speaker change mid-Whisper-segment cannot be
   split — that whole segment gets one label.
+- **Short clips collapse to one speaker.** The clustering needs material to
+  work with; under roughly ten seconds pyannote warns that the audio is *"too
+  short to contain 2 or more speakers"* and returns a single label, even when
+  you asked for two. This is a floor on the audio, not a bug.
 - Segments matching no speaker turn are labelled `UNKNOWN` rather than being
   silently dropped or guessed at.
 - It roughly doubles the runtime, since the audio is processed by two models.
@@ -213,8 +241,8 @@ transcribed in its own language; Whisper renders it into the selected one. One
 language per run — a bilingual recording needs two passes, and neither will be
 right about the other half.
 
-There is no CI: the test path needs Apple Silicon hardware and multi-GB gated
-model downloads, which no hosted runner provides.
+There is no CI: the test path needs Apple Silicon hardware and multi-GB model
+downloads, which no hosted runner provides.
 
 ## License
 

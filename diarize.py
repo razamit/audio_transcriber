@@ -33,7 +33,22 @@ from transcribe import (
     run_transcription,
 )
 
-DIARIZATION_REPO = "pyannote/speaker-diarization-community-1"
+# The community re-upload of pyannote's Community-1 pipeline. Functionally the
+# same CC-BY-4.0 pipeline as pyannote/speaker-diarization-community-1, but
+# ungated: it downloads with no HuggingFace account, so `git clone && setup.sh`
+# is enough to run this. Its config.yaml resolves segmentation, embedding and
+# plda to paths inside this same repo, so there is no second gated fetch behind
+# it.
+#
+# The tradeoff is provenance: this is a third-party upload, not pyannote's own
+# org. Every filename and byte size matches the official repo's listing, but
+# HuggingFace will not serve content hashes for a gated repo without auth, so
+# the weights cannot be verified as byte-identical to upstream. Pinning the
+# revision is what makes that tolerable — the bytes are fixed at a commit that
+# was reviewed once, and cannot change underneath a later run.
+DIARIZATION_REPO = "pyannote-community/speaker-diarization-community-1"
+DIARIZATION_REVISION = "8a527374977391da736e0daaef26855d949d9685"
+
 PARAGRAPH_GAP_SECONDS = 2.0
 UNKNOWN_SPEAKER = "UNKNOWN"
 
@@ -48,18 +63,19 @@ UNKNOWN_SPEAKER = "UNKNOWN"
 # at import time and falls back to its bundled config.yaml if it is unset.
 os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
 
-TOKEN_HELP = f"""\
-A HuggingFace access token is required: the pyannote models are gated.
+DOWNLOAD_HELP = f"""\
+Could not download {DIARIZATION_REPO}.
 
-  1. Create a free account at https://huggingface.co/join
-  2. Accept the conditions at:
-       https://hf.co/{DIARIZATION_REPO}
-       https://hf.co/pyannote/segmentation-3.0
-  3. Create a token (type "Read") at https://hf.co/settings/tokens
-  4. Store it once:
-       .venv/bin/hf auth login
-     or export it for this shell:
-       export HF_TOKEN=hf_your_token_here
+No account is needed for this model, so the usual cause is no network on the
+first run, or a rate limit on unauthenticated downloads. If it is a rate limit,
+a free HuggingFace token raises the ceiling — create one (type "Read") at
+https://hf.co/settings/tokens and store it once:
+
+    .venv/bin/hf auth login
+
+or export it for this shell:
+
+    export HF_TOKEN=hf_your_token_here
 """
 
 
@@ -67,15 +83,17 @@ A HuggingFace access token is required: the pyannote models are gated.
 # Model setup
 # --------------------------------------------------------------------------
 
-def resolve_hf_token():
-    """Find a token in the env or the stored HuggingFace login, or exit."""
+def optional_hf_token():
+    """A HuggingFace token if one happens to be configured, otherwise None.
+
+    The diarization model is ungated, so a token is never required. One is
+    still passed along when present, because authenticated downloads get a
+    higher rate limit than anonymous ones.
+    """
     from huggingface_hub import get_token
 
-    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
-    token = token or get_token()
-    if not token:
-        sys.exit(TOKEN_HELP)
-    return token
+    env_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+    return env_token or get_token()
 
 
 def select_torch_device():
@@ -95,12 +113,16 @@ def load_diarization_pipeline(token):
     """
     from pyannote.audio import Pipeline
 
-    pipeline = Pipeline.from_pretrained(DIARIZATION_REPO, token=token)
-    if pipeline is None:
-        sys.exit(
-            f"Could not load {DIARIZATION_REPO}. The token was found but access "
-            f"was refused.\n\n{TOKEN_HELP}"
+    try:
+        pipeline = Pipeline.from_pretrained(
+            DIARIZATION_REPO, revision=DIARIZATION_REVISION, token=token
         )
+    except Exception as exc:
+        sys.exit(f"{DOWNLOAD_HELP}\nUnderlying error: {exc}")
+
+    if pipeline is None:
+        # from_pretrained returns None rather than raising on some failures.
+        sys.exit(DOWNLOAD_HELP)
 
     device = select_torch_device()
     try:
@@ -134,10 +156,28 @@ def prompt_for_speaker_count():
 # Diarization and merging
 # --------------------------------------------------------------------------
 
+def as_annotation(output):
+    """Unwrap whatever the pipeline returned into a pyannote Annotation.
+
+    pyannote.audio 4.x returns a DiarizeOutput carrying the Annotation on
+    .speaker_diarization alongside embeddings; 3.x returned the Annotation
+    itself. Accept either so the script is not pinned to one pyannote major.
+    """
+    annotation = getattr(output, "speaker_diarization", output)
+    if not hasattr(annotation, "itertracks"):
+        sys.exit(
+            "Unexpected diarization output "
+            f"({type(output).__name__}); this pyannote.audio version is not "
+            "supported. Reinstall with: "
+            ".venv/bin/pip install -r requirements-diarize.txt"
+        )
+    return annotation
+
+
 def extract_speaker_turns(pipeline, audio_path, speaker_count):
     """Run diarization and flatten it to (start, end, speaker) tuples."""
     kwargs = {"num_speakers": speaker_count} if speaker_count else {}
-    annotation = pipeline(audio_path, **kwargs)
+    annotation = as_annotation(pipeline(audio_path, **kwargs))
 
     turns = [
         (segment.start, segment.end, speaker)
@@ -247,7 +287,7 @@ def write_labelled_transcript(output_path, labelled):
 
 def main():
     require_ffmpeg()
-    token = resolve_hf_token()
+    token = optional_hf_token()
 
     profile = prompt_for_profile()
     audio_path = prompt_for_audio_path()

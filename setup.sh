@@ -23,8 +23,8 @@ if [ "${1:-}" = "--with-diarization" ]; then
     echo "Installing speaker diarization extras (~2GB) ..."
     .venv/bin/pip install -r requirements-diarize.txt
     echo
-    echo "Diarization installed. It needs a HuggingFace token for the gated"
-    echo "pyannote models — see the README. Then run:"
+    echo "Diarization installed. No account or token is needed; the model"
+    echo "downloads on first run. Then run:"
     echo "    .venv/bin/python diarize.py"
 else
     echo
