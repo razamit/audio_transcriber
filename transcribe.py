@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Local Hebrew audio transcription on Apple Silicon via mlx-whisper.
+"""Local audio transcription on Apple Silicon via mlx-whisper.
 
-Interactive only: run it, paste or drag in an audio file, get a timestamped
-transcript written next to the input file.
+Interactive only: run it, pick a language, paste or drag in an audio file, get
+a timestamped transcript written next to the input file. Which model runs is
+decided by the chosen profile — see profiles.py.
 """
 
 import os
@@ -12,8 +13,8 @@ import sys
 import time
 import traceback
 
-MODEL_REPO = "mlx-community/ivrit-ai-whisper-large-v3-mlx"
-LANGUAGE = "he"
+from profiles import prompt_for_profile
+
 PARAGRAPH_GAP_SECONDS = 2.0
 MAX_PROMPT_ATTEMPTS = 3
 
@@ -167,26 +168,31 @@ def hf_cache_root():
     return os.path.join(hf_home, "hub")
 
 
-def model_is_cached(repo=MODEL_REPO):
+def model_is_cached(repo):
     """True if the given repo already looks present in the HuggingFace cache."""
     folder = "models--" + repo.replace("/", "--")
     return os.path.isdir(os.path.join(hf_cache_root(), folder))
 
 
-def announce_first_run_download():
-    """Warn about the one-time model download so a slow start isn't a mystery."""
-    if not model_is_cached():
+def announce_first_run_download(profile):
+    """Warn about the one-time model download so a slow start isn't a mystery.
+
+    Each profile has its own model, so switching language for the first time
+    triggers a fresh download even though the tool has been run before.
+    """
+    if not model_is_cached(profile.repo):
         print(
-            f"First run: downloading {MODEL_REPO} (~3GB) into the HuggingFace "
-            "cache. This takes a few minutes and only happens once."
+            f"First run for {profile.label}: downloading {profile.repo} "
+            f"({profile.download_size}) into the HuggingFace cache. This takes "
+            "a few minutes and only happens once per language."
         )
 
 
-def run_transcription(audio_path):
-    """Transcribe with mlx-whisper.
+def run_transcription(audio_path, profile):
+    """Transcribe with mlx-whisper using the given profile's model.
 
-    The kwargs are deliberate: language="he" is mandatory because the
-    finetune's language detection was degraded during training, and
+    The kwargs are deliberate: an explicit language is mandatory because the
+    Hebrew finetune's language detection was degraded during training, and
     condition_on_previous_text=False avoids the repetition-loop failure mode
     on long recordings. See the README before changing them.
     """
@@ -194,8 +200,8 @@ def run_transcription(audio_path):
 
     return mlx_whisper.transcribe(
         audio_path,
-        path_or_hf_repo=MODEL_REPO,
-        language=LANGUAGE,
+        path_or_hf_repo=profile.repo,
+        language=profile.language,
         verbose=True,
         condition_on_previous_text=False,
         hallucination_silence_threshold=2.0,
@@ -209,16 +215,17 @@ def run_transcription(audio_path):
 def main():
     require_ffmpeg()
 
+    profile = prompt_for_profile()
     audio_path = prompt_for_audio_path()
     output_path = build_output_path(audio_path)
 
-    announce_first_run_download()
+    announce_first_run_download(profile)
 
-    print(f"Transcribing {audio_path} ...")
+    print(f"Transcribing {audio_path} as {profile.label} ...")
     started = time.monotonic()
 
     try:
-        result = run_transcription(audio_path)
+        result = run_transcription(audio_path, profile)
     except Exception:
         print("\nTranscription failed:\n", file=sys.stderr)
         traceback.print_exc()

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Hebrew transcription with speaker labels ("who said what").
+"""Transcription with speaker labels ("who said what").
 
 Runs two models over the same audio and merges them by timestamp:
 
@@ -12,6 +12,9 @@ speaker overlaps it most in time.
 
 Speakers come out as SPEAKER_00, SPEAKER_01... — the model separates voices,
 it does not know their names.
+
+pyannote is language-agnostic, so only the Whisper half depends on the chosen
+language profile.
 """
 
 import os
@@ -20,6 +23,7 @@ import time
 import traceback
 from collections import defaultdict
 
+from profiles import prompt_for_profile
 from transcribe import (
     announce_first_run_download,
     build_output_path,
@@ -245,11 +249,12 @@ def main():
     require_ffmpeg()
     token = resolve_hf_token()
 
+    profile = prompt_for_profile()
     audio_path = prompt_for_audio_path()
     speaker_count = prompt_for_speaker_count()
     output_path = build_output_path(audio_path, suffix="_speakers")
 
-    announce_first_run_download()
+    announce_first_run_download(profile)
     started = time.monotonic()
 
     try:
@@ -260,8 +265,8 @@ def main():
         turns = extract_speaker_turns(pipeline, audio_path, speaker_count)
         print(f"  {len(turns)} turn(s) found.")
 
-        print(f"\nTranscribing {audio_path} ...")
-        result = run_transcription(audio_path)
+        print(f"\nTranscribing {audio_path} as {profile.label} ...")
+        result = run_transcription(audio_path, profile)
     except Exception:
         print("\nFailed:\n", file=sys.stderr)
         traceback.print_exc()

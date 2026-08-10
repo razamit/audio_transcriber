@@ -1,9 +1,9 @@
 # audio_transcriber
 
-Local Hebrew audio transcription on Apple Silicon. A single interactive Python
-script that runs [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper)
-against the [ivrit-ai](https://huggingface.co/ivrit-ai) Whisper large-v3
-finetune. Nothing is uploaded — transcription runs entirely on-device.
+Local Hebrew and English audio transcription on Apple Silicon. A single
+interactive Python script that runs [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper)
+against a Whisper model chosen to match the language. Nothing is uploaded —
+transcription runs entirely on-device.
 
 > **Apple Silicon only.** This runs on M-series Macs and nowhere else. It is
 > built on Apple's MLX framework, which is Metal-backed and has no CPU or CUDA
@@ -37,9 +37,10 @@ cd audio_transcriber
 .venv/bin/python transcribe.py
 ```
 
-It prompts for a path:
+It prompts for a language, then a path:
 
 ```
+Language: [1] Hebrew  [2] English  (Enter = Hebrew):
 Path to audio file:
 ```
 
@@ -51,9 +52,39 @@ The transcript is written next to the source audio as `<name>.txt` in UTF-8. An
 existing file is never overwritten — the script falls back to `<name>_2.txt`,
 `<name>_3.txt`, and so on.
 
-On first run the model (~3GB) downloads from HuggingFace into
-`~/.cache/huggingface`. The script prints a heads-up before this so a long
-first startup doesn't look like a hang.
+Each language has its own model, downloaded from HuggingFace into
+`~/.cache/huggingface` the first time you pick it. The script prints a heads-up
+before this so a long first startup doesn't look like a hang.
+
+To skip the prompt — useful if you mostly work in one language — set
+`TRANSCRIBE_LANG` to a language key:
+
+```
+TRANSCRIBE_LANG=en .venv/bin/python transcribe.py
+```
+
+An unrecognized value is an error rather than a silent fallback, so a typo
+can't quietly transcribe an hour of audio with the wrong model.
+
+## Languages
+
+| Key | Language | Model | Download |
+|-----|----------|-------|----------|
+| `he` | Hebrew (default) | [`ivrit-ai-whisper-large-v3`](https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-mlx) | ~3 GB |
+| `en` | English | [`whisper-large-v3-turbo`](https://huggingface.co/mlx-community/whisper-large-v3-turbo) | ~1.6 GB |
+
+The model and the language code are one choice, not two — they live paired in
+`profiles.py`. The Hebrew entry is an [ivrit-ai](https://huggingface.co/ivrit-ai)
+finetune that is *only* good at Hebrew, and the English entry is stock
+large-v3-turbo, whose distilled decoder makes it several times faster than full
+large-v3 at effectively equal quality on clear conversational English. Pointing
+either model at the other's language degrades the output with no error to warn
+you, which is why they cannot be set independently.
+
+Adding a language is one entry in `PROFILES`. For difficult English audio —
+heavy accents, background noise, persistent crosstalk — swap the English entry's
+repo for `mlx-community/whisper-large-v3-mlx` (3 GB), which is slower but more
+robust.
 
 ## Output format
 
@@ -73,9 +104,11 @@ that is unpleasant to read for anything longer than a minute.
 
 ## Notes on the transcription settings
 
-- **`language="he"` is mandatory, not an optimization.** The finetune's
-  language detection was degraded during training, so autodetection is
-  unreliable. This model is for Hebrew only.
+- **An explicit `language` is mandatory, not an optimization.** The Hebrew
+  finetune's language detection was degraded during training, so autodetection
+  is unreliable. Every profile therefore pins its language rather than letting
+  Whisper guess — which also means a file must be transcribed in the language
+  you picked, and mixed-language audio is rendered into that one language.
 - **`condition_on_previous_text=False`** avoids Whisper's repetition-loop
   failure mode, where the decoder gets stuck emitting the same phrase for
   minutes on long recordings.
@@ -139,9 +172,11 @@ The pyannote models are gated, so a HuggingFace token is required:
 .venv/bin/python diarize.py
 ```
 
-It prompts for the audio path, then for a speaker count — leave it blank to
-auto-detect, or enter a number if you know it. Supplying the count is the
-single biggest accuracy lever. Output goes to `<name>_speakers.txt`:
+It prompts for the language, then the audio path, then a speaker count — leave
+the count blank to auto-detect, or enter a number if you know it. Supplying it
+is the single biggest accuracy lever. pyannote itself is language-agnostic, so
+the language choice only affects the Whisper half of the merge. Output goes to
+`<name>_speakers.txt`:
 
 ```
 2 speaker(s) detected:
@@ -170,11 +205,13 @@ single biggest accuracy lever. Output goes to `<name>_speakers.txt`:
 ## Scope
 
 Transcription and optional speaker attribution. No summarization, no API
-calls, no CLI flags — both scripts are interactive prompts only.
+calls, no CLI flags — both scripts are interactive prompts only, with a single
+`TRANSCRIBE_LANG` environment override.
 
-Because `language="he"` is forced, non-Hebrew speech in the audio is not
-transcribed in its own language; Whisper renders it into Hebrew. This is a
-Hebrew tool, not a multilingual one.
+Because each profile pins its language, speech in any *other* language is not
+transcribed in its own language; Whisper renders it into the selected one. One
+language per run — a bilingual recording needs two passes, and neither will be
+right about the other half.
 
 There is no CI: the test path needs Apple Silicon hardware and multi-GB gated
 model downloads, which no hosted runner provides.
