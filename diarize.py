@@ -24,6 +24,7 @@ import traceback
 from collections import defaultdict
 
 from profiles import prompt_for_profile
+from speaker_names import name_speakers_in_file
 from transcribe import (
     announce_first_run_download,
     build_output_path,
@@ -321,6 +322,11 @@ def main():
 
     print(f"\nTranscript written to: {os.path.abspath(output_path)}")
     print(f"Elapsed: {format_timestamp(elapsed)} ({elapsed:.1f}s)")
+
+    # Naming happens after the file is safely on disk, never before: the
+    # expensive work is already saved, so abandoning this prompt costs nothing
+    # and the transcript survives exactly as diarization produced it.
+    name_speakers_in_file(output_path)
 
 
 if __name__ == "__main__":

@@ -212,10 +212,42 @@ the language choice only affects the Whisper half of the merge. Output goes to
 [00:00:04] SPEAKER_01: אני בסדר גמור, תודה ששאלת.
 ```
 
+### Naming the speakers
+
+Diarization separates voices but cannot name them, so it labels them
+`SPEAKER_00`, `SPEAKER_01`... The numbering reflects clustering order and
+changes between runs, which makes a raw diarized transcript tiring to read.
+
+When a run finishes, `diarize.py` writes the file and *then* offers to name
+them. It shows each speaker's longest lines, because the label alone is not
+something anyone can answer:
+
+```
+SPEAKER_01 — 235 segment(s)
+  [00:04:18] I'm guessing it will be easier for you now to really give me...
+  [00:10:10] So, you see most stages are quite quick. The things that take...
+Name (Enter to keep SPEAKER_01):
+```
+
+Press Enter to leave a speaker anonymous — useful when you recognise two voices
+out of three. The transcript is rewritten in place, header included. Since the
+file is written before the prompt, abandoning it with Ctrl-C costs nothing.
+
+To name a transcript produced earlier, without re-running both models:
+
+```
+.venv/bin/python name_speakers.py
+```
+
+It takes an existing `<name>_speakers.txt` and rewrites it the same way. This is
+the one place the tool overwrites a file rather than bumping to `_2` — renaming
+labels is reversible by re-running diarization, and a stack of near-identical
+transcripts is worse than editing the one you have.
+
 ### Limitations
 
-- **Speakers are anonymous.** You get `SPEAKER_00`, `SPEAKER_01` — the model
-  separates voices, it cannot name them. Map them to real names yourself.
+- **The model cannot identify anyone.** It separates voices; putting names to
+  them is a manual step you drive, from listening or from context in the text.
 - **Crosstalk degrades it.** When two people talk over each other, the segment
   is attributed to whoever overlaps more; the other person's words are still
   in the text but under the wrong label.
@@ -232,9 +264,9 @@ the language choice only affects the Whisper half of the merge. Output goes to
 
 ## Scope
 
-Transcription and optional speaker attribution. No summarization, no API
-calls, no CLI flags — both scripts are interactive prompts only, with a single
-`TRANSCRIBE_LANG` environment override.
+Transcription, optional speaker attribution, and naming those speakers. No
+summarization, no API calls, no CLI flags — every script is interactive prompts
+only, with a single `TRANSCRIBE_LANG` environment override.
 
 Because each profile pins its language, speech in any *other* language is not
 transcribed in its own language; Whisper renders it into the selected one. One
