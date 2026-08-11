@@ -37,20 +37,27 @@ cd audio_transcriber
 .venv/bin/python transcribe.py
 ```
 
-It prompts for a language, then a path:
+This is the only script you run. It prompts for a language, a file, and whether
+you want to know who said what:
 
 ```
-Language: [1] Hebrew  [2] English  (Enter = Hebrew):
-Path to audio file:
+Language: [1] Hebrew  [2] English  (Enter = Hebrew): 2
+Path to audio file: call.m4a
+Label speakers? [y/N]: y
+Number of speakers (press Enter to auto-detect): 3
 ```
 
 Drag the audio file from Finder into the Terminal window and press Enter, or
 paste a path. Surrounding quotes, drag-and-drop backslash escaping, and `~` are
 all handled. A bad path re-prompts up to three times.
 
-The transcript is written next to the source audio as `<name>.txt` in UTF-8. An
-existing file is never overwritten — the script falls back to `<name>_2.txt`,
-`<name>_3.txt`, and so on.
+Answering `n` to speakers skips diarization entirely — no pyannote, no second
+model, no extra dependencies needed. See
+[Speaker labels](#speaker-labels-who-said-what) for the rest.
+
+The transcript is written next to the source audio in UTF-8, as `<name>.txt` or
+`<name>_speakers.txt`. An existing file is never overwritten — the script falls
+back to `<name>_2.txt`, `<name>_3.txt`, and so on.
 
 Each language has its own model, downloaded from HuggingFace into
 `~/.cache/huggingface` the first time you pick it. The script prints a heads-up
@@ -85,6 +92,28 @@ Adding a language is one entry in `PROFILES`. For difficult English audio —
 heavy accents, background noise, persistent crosstalk — swap the English entry's
 repo for `mlx-community/whisper-large-v3-mlx` (3 GB), which is slower but more
 robust.
+
+## Project layout
+
+`transcribe.py` is the only entry point; everything else is a module it drives.
+`name_speakers.py` is the one exception — see
+[Naming the speakers](#naming-the-speakers).
+
+| File | Responsibility |
+|------|----------------|
+| `transcribe.py` | Prompts, ordering, error handling. No model code. |
+| `profiles.py` | Which Whisper model goes with which language |
+| `paths.py` | Drag-and-drop path cleanup, output naming, ffmpeg check |
+| `transcription.py` | Running Whisper |
+| `diarization.py` | Running pyannote; merging speakers into segments |
+| `transcript_output.py` | Rendering and writing both transcript formats |
+| `speaker_names.py` | Replacing `SPEAKER_00` with real names |
+| `name_speakers.py` | Entry point for naming an existing transcript |
+
+`diarization.py` keeps its `torch` and `pyannote` imports *inside* functions on
+purpose. The module has to be importable on a machine with only the base
+install, so the speakers prompt can be offered and explained rather than
+crashing the script at startup.
 
 ## Output format
 
@@ -125,7 +154,7 @@ All transcription and diarization runs on your Mac. Audio is never uploaded,
 and there is no inference API involved.
 
 Network access is needed **once**, to download model weights from HuggingFace
-into `~/.cache/huggingface`. After that both scripts run fully offline — you
+into `~/.cache/huggingface`. After that everything runs fully offline — you
 can verify this yourself by cutting the network, or by forcing it:
 
 ```
@@ -133,33 +162,41 @@ HF_HUB_OFFLINE=1 .venv/bin/python transcribe.py
 ```
 
 Neither script requires a HuggingFace account. If you happen to have a token
-configured, `diarize.py` passes it along purely to get the higher rate limit on
+configured, `transcribe.py` passes it along purely to get the higher rate limit on
 downloads — it is a **download credential**, never an API key, is not used at
 inference time, and nothing is metered or billed.
 
 One caveat worth knowing: pyannote.audio 4.x bundles OpenTelemetry metrics
 that are **enabled by default** and post to `https://otel.pyannote.ai` on every
 run. No audio, text or filename is sent — it is the model id, library version,
-a random session id, the audio duration and the speaker-count hint. `diarize.py`
+a random session id, the audio duration and the speaker-count hint. `diarization.py`
 opts out of this by setting `PYANNOTE_METRICS_ENABLED=false` before importing
 pyannote. Export `PYANNOTE_METRICS_ENABLED=true` if you would rather send them.
 
 ## Speaker labels (who said what)
 
-`diarize.py` is an optional second script that adds speaker attribution.
-Whisper cannot do this alone — it has no concept of speakers — so this runs
+Answering `y` to `Label speakers?` adds speaker attribution. Whisper cannot do
+this alone — it has no concept of speakers — so this runs
 [pyannote.audio](https://github.com/pyannote/pyannote-audio) to find *who spoke
 when*, runs Whisper to find *what was said*, and merges the two by timestamp.
 Each Whisper segment is assigned to whichever speaker overlaps it most.
 
 ### Extra setup
 
+The prompt is always offered, but the models behind it install separately:
+
 ```
 ./setup.sh --with-diarization
 ```
 
-That is all of it. No account, no token, no terms to accept — the diarization
-model (~33 MB) downloads on first run like any other dependency.
+pyannote pulls in PyTorch and friends — roughly 1.2 GB on top of the base
+install, which plain transcription never touches. That is the only reason it is
+a separate step. Answering `y` without it exits immediately with this command
+rather than failing partway through a run.
+
+Beyond that there is nothing to configure: no account, no token, no terms to
+accept — the diarization model (~33 MB) downloads on first run like any other
+dependency.
 
 This uses [`pyannote-community/speaker-diarization-community-1`](https://huggingface.co/pyannote-community/speaker-diarization-community-1),
 an **ungated re-upload** of pyannote's Community-1 pipeline, pinned to a fixed
@@ -175,7 +212,7 @@ byte-identical to upstream**. Pinning `DIARIZATION_REVISION` is the mitigation �
 the bytes are fixed at one reviewed commit and cannot change under a later run.
 
 If you would rather have first-party weights, set both constants at the top of
-`diarize.py` back to the official repo and follow its gated flow:
+`diarization.py` back to the official repo and follow its gated flow:
 
 ```python
 DIARIZATION_REPO = "pyannote/speaker-diarization-community-1"
@@ -187,20 +224,16 @@ DIARIZATION_REVISION = None
 3. Create a **Read** token at <https://hf.co/settings/tokens>
 4. Store it once: `.venv/bin/hf auth login`
 
-`diarize.py` already passes a token when one is configured, so nothing else
+`transcribe.py` already passes a token when one is configured, so nothing else
 changes.
 
 ### Usage
 
-```
-.venv/bin/python diarize.py
-```
-
-It prompts for the language, then the audio path, then a speaker count — leave
-the count blank to auto-detect, or enter a number if you know it. Supplying it
-is the single biggest accuracy lever. pyannote itself is language-agnostic, so
-the language choice only affects the Whisper half of the merge. Output goes to
-`<name>_speakers.txt`:
+Answering `y` adds one more prompt — a speaker count. Leave it blank to
+auto-detect, or enter a number if you know it; supplying it is the single
+biggest accuracy lever pyannote exposes. pyannote itself is language-agnostic,
+so the language choice only affects the Whisper half of the merge. Output goes
+to `<name>_speakers.txt`:
 
 ```
 2 speaker(s) detected:
@@ -218,7 +251,7 @@ Diarization separates voices but cannot name them, so it labels them
 `SPEAKER_00`, `SPEAKER_01`... The numbering reflects clustering order and
 changes between runs, which makes a raw diarized transcript tiring to read.
 
-When a run finishes, `diarize.py` writes the file and *then* offers to name
+When a run finishes, `transcribe.py` writes the file and *then* offers to name
 them. It shows each speaker's longest lines, because the label alone is not
 something anyone can answer:
 

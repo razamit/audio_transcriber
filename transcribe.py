@@ -1,241 +1,122 @@
 #!/usr/bin/env python3
-"""Local audio transcription on Apple Silicon via mlx-whisper.
+"""Local audio transcription on Apple Silicon, optionally with speaker labels.
 
-Interactive only: run it, pick a language, paste or drag in an audio file, get
-a timestamped transcript written next to the input file. Which model runs is
-decided by the chosen profile — see profiles.py.
+The single entry point. Run it, answer four prompts, get a transcript written
+next to the input file:
+
+    Language: [1] Hebrew  [2] English  (Enter = Hebrew): 2
+    Path to audio file: call.m4a
+    Label speakers? [y/N]: y
+    Number of speakers (press Enter to auto-detect): 3
+
+Everything below is orchestration only — prompts, ordering, and error
+handling. The work lives in dedicated modules: profiles.py (which model for
+which language), paths.py (input/output paths), transcription.py (Whisper),
+diarization.py (pyannote), transcript_output.py (rendering), speaker_names.py
+(putting real names on the labels).
+
+Speaker labelling is optional because its dependencies are not: pyannote pulls
+in roughly 1.2GB of PyTorch that plain transcription never touches, so it
+installs separately and this script degrades gracefully without it.
 """
 
 import os
-import re
-import shutil
 import sys
 import time
 import traceback
 
+import diarization
+from diarization import extract_speaker_turns, label_segments, prompt_for_speaker_count
+from paths import build_output_path, prompt_for_audio_path, require_ffmpeg
 from profiles import prompt_for_profile
-
-PARAGRAPH_GAP_SECONDS = 2.0
-MAX_PROMPT_ATTEMPTS = 3
-
-
-# --------------------------------------------------------------------------
-# Input path handling
-# --------------------------------------------------------------------------
-
-def _strip_surrounding_quotes(raw):
-    """Remove one matching pair of surrounding single/double quotes."""
-    for quote in ("'", '"'):
-        if len(raw) >= 2 and raw.startswith(quote) and raw.endswith(quote):
-            return raw[1:-1], True
-    return raw, False
+from speaker_names import name_speakers_in_file
+from transcript_output import (
+    format_timestamp,
+    write_labelled_transcript,
+    write_transcript,
+)
+from transcription import announce_first_run_download, run_transcription
 
 
-def sanitize_path_input(raw):
-    """Turn whatever the user pasted or dragged in into a usable path.
+def prompt_for_speaker_labelling():
+    """Ask whether to identify who spoke. Exits with help if it cannot.
 
-    Handles surrounding quotes, the backslash escaping Terminal adds on
-    drag-and-drop, and ``~``. Returns the best candidate; if unescaping
-    produced a path that does not exist but the literal one does, the literal
-    one wins (filenames may legitimately contain backslashes).
+    Answering yes without the extras installed is a dead end, so it is caught
+    here — before the audio path is used and long before any model loads.
     """
-    text = raw.strip()
-    text, was_quoted = _strip_surrounding_quotes(text)
-    text = text.strip()
+    try:
+        raw = input("Label speakers? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        sys.exit("\nCancelled.")
 
-    candidates = [text]
-    if not was_quoted and "\\" in text:
-        # Terminal escapes spaces, parens, ampersands... as \<char>.
-        candidates.insert(0, re.sub(r"\\(.)", r"\1", text))
+    if raw not in ("y", "yes"):
+        return False
 
-    candidates = [os.path.expanduser(c) for c in candidates]
-    for candidate in candidates:
-        if os.path.exists(candidate):
-            return candidate
-    return candidates[0]
+    if not diarization.diarization_is_available():
+        sys.exit(f"\n{diarization.INSTALL_HELP}")
+    return True
 
 
-def describe_path_problem(path):
-    """Return a human-readable reason the path is unusable, or None if fine."""
-    if not path:
-        return "No path entered."
-    if not os.path.exists(path):
-        return f"No such file: {path}"
-    if os.path.isdir(path):
-        return f"That is a directory, not a file: {path}"
-    if not os.access(path, os.R_OK):
-        return f"File exists but is not readable: {path}"
-    return None
+def transcribe_only(audio_path, profile, output_path):
+    """Whisper alone: text with timestamps, no speakers."""
+    print(f"\nTranscribing {audio_path} as {profile.label} ...")
+    result = run_transcription(audio_path, profile)
+    write_transcript(output_path, result.get("segments") or [], result.get("text"))
 
 
-def prompt_for_audio_path():
-    """Prompt until a readable file is given. Exits after too many failures."""
-    for attempt in range(1, MAX_PROMPT_ATTEMPTS + 1):
-        try:
-            raw = input("Path to audio file: ")
-        except (EOFError, KeyboardInterrupt):
-            sys.exit("\nCancelled.")
+def transcribe_with_speakers(audio_path, profile, output_path, speaker_count):
+    """pyannote then Whisper, merged by timestamp.
 
-        path = sanitize_path_input(raw)
-        problem = describe_path_problem(path)
-        if problem is None:
-            return os.path.abspath(path)
-
-        remaining = MAX_PROMPT_ATTEMPTS - attempt
-        print(f"  {problem}")
-        if remaining:
-            print(f"  Try again ({remaining} attempt(s) left).")
-
-    sys.exit(
-        f"Giving up after {MAX_PROMPT_ATTEMPTS} attempts. "
-        "Drag the file into this window or paste its full path, then press Enter."
-    )
-
-
-# --------------------------------------------------------------------------
-# Output path and formatting
-# --------------------------------------------------------------------------
-
-def build_output_path(audio_path, suffix=""):
-    """`<stem><suffix>.txt` next to the input, bumped `_2`, `_3`... if taken."""
-    directory = os.path.dirname(audio_path)
-    stem = os.path.splitext(os.path.basename(audio_path))[0] + suffix
-
-    candidate = os.path.join(directory, f"{stem}.txt")
-    counter = 2
-    while os.path.exists(candidate):
-        candidate = os.path.join(directory, f"{stem}_{counter}.txt")
-        counter += 1
-    return candidate
-
-
-def format_timestamp(seconds):
-    """Seconds -> HH:MM:SS."""
-    total = max(0, int(seconds))
-    hours, remainder = divmod(total, 3600)
-    minutes, secs = divmod(remainder, 60)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-
-
-def render_segments(segments):
-    """One `[HH:MM:SS] text` line per segment, blank line on a long pause."""
-    lines = []
-    previous_end = None
-
-    for segment in segments:
-        text = (segment.get("text") or "").strip()
-        if not text:
-            continue
-
-        start = segment.get("start", 0.0)
-        if previous_end is not None and start - previous_end > PARAGRAPH_GAP_SECONDS:
-            lines.append("")
-        lines.append(f"[{format_timestamp(start)}] {text}")
-        previous_end = segment.get("end", start)
-
-    return "\n".join(lines) + "\n" if lines else ""
-
-
-def write_transcript(output_path, segments, fallback_text):
-    """Write the rendered transcript as UTF-8 without a BOM."""
-    body = render_segments(segments)
-    if not body:
-        # No usable segments; fall back to the flat blob rather than an empty file.
-        body = (fallback_text or "").strip() + "\n"
-
-    with open(output_path, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(body)
-
-
-# --------------------------------------------------------------------------
-# Environment checks
-# --------------------------------------------------------------------------
-
-def require_ffmpeg():
-    if shutil.which("ffmpeg") is None:
-        sys.exit(
-            "ffmpeg is required to decode audio but was not found on PATH.\n"
-            "Install it with:  brew install ffmpeg"
-        )
-
-
-def hf_cache_root():
-    """Root of the HuggingFace hub cache, honoring the usual env overrides."""
-    cache_root = os.environ.get("HF_HUB_CACHE")
-    if cache_root:
-        return cache_root
-    hf_home = os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
-    return os.path.join(hf_home, "hub")
-
-
-def model_is_cached(repo):
-    """True if the given repo already looks present in the HuggingFace cache."""
-    folder = "models--" + repo.replace("/", "--")
-    return os.path.isdir(os.path.join(hf_cache_root(), folder))
-
-
-def announce_first_run_download(profile):
-    """Warn about the one-time model download so a slow start isn't a mystery.
-
-    Each profile has its own model, so switching language for the first time
-    triggers a fresh download even though the tool has been run before.
+    Diarization runs first so that a missing model or a bad audio file fails
+    before spending minutes on transcription.
     """
-    if not model_is_cached(profile.repo):
-        print(
-            f"First run for {profile.label}: downloading {profile.repo} "
-            f"({profile.download_size}) into the HuggingFace cache. This takes "
-            "a few minutes and only happens once per language."
-        )
+    print("\nLoading diarization pipeline ...")
+    pipeline = diarization.load_diarization_pipeline(diarization.optional_hf_token())
 
+    print("Detecting speaker turns ...")
+    turns = extract_speaker_turns(pipeline, audio_path, speaker_count)
+    print(f"  {len(turns)} turn(s) found.")
 
-def run_transcription(audio_path, profile):
-    """Transcribe with mlx-whisper using the given profile's model.
+    print(f"\nTranscribing {audio_path} as {profile.label} ...")
+    result = run_transcription(audio_path, profile)
 
-    The kwargs are deliberate: an explicit language is mandatory because the
-    Hebrew finetune's language detection was degraded during training, and
-    condition_on_previous_text=False avoids the repetition-loop failure mode
-    on long recordings. See the README before changing them.
-    """
-    import mlx_whisper
+    labelled = label_segments(result.get("segments") or [], turns)
+    if not labelled:
+        sys.exit("No speech was transcribed; nothing to write.")
+    write_labelled_transcript(output_path, labelled)
 
-    return mlx_whisper.transcribe(
-        audio_path,
-        path_or_hf_repo=profile.repo,
-        language=profile.language,
-        verbose=True,
-        condition_on_previous_text=False,
-        hallucination_silence_threshold=2.0,
-    )
-
-
-# --------------------------------------------------------------------------
-# Main
-# --------------------------------------------------------------------------
 
 def main():
     require_ffmpeg()
 
     profile = prompt_for_profile()
     audio_path = prompt_for_audio_path()
-    output_path = build_output_path(audio_path)
+    with_speakers = prompt_for_speaker_labelling()
+    speaker_count = prompt_for_speaker_count() if with_speakers else None
 
+    output_path = build_output_path(audio_path, "_speakers" if with_speakers else "")
     announce_first_run_download(profile)
-
-    print(f"Transcribing {audio_path} as {profile.label} ...")
     started = time.monotonic()
 
     try:
-        result = run_transcription(audio_path, profile)
+        if with_speakers:
+            transcribe_with_speakers(audio_path, profile, output_path, speaker_count)
+        else:
+            transcribe_only(audio_path, profile, output_path)
     except Exception:
-        print("\nTranscription failed:\n", file=sys.stderr)
+        print("\nFailed:\n", file=sys.stderr)
         traceback.print_exc()
         sys.exit(1)
 
     elapsed = time.monotonic() - started
-    write_transcript(output_path, result.get("segments") or [], result.get("text"))
-
     print(f"\nTranscript written to: {os.path.abspath(output_path)}")
     print(f"Elapsed: {format_timestamp(elapsed)} ({elapsed:.1f}s)")
+
+    # Naming happens after the file is safely on disk, never before: the
+    # expensive work is already saved, so abandoning this prompt costs nothing
+    # and the transcript survives exactly as diarization produced it.
+    if with_speakers:
+        name_speakers_in_file(output_path)
 
 
 if __name__ == "__main__":

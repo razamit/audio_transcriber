@@ -25,7 +25,7 @@ if [ "${1:-}" = "--with-diarization" ]; then
     echo
     echo "Diarization installed. No account or token is needed; the model"
     echo "downloads on first run. Then run:"
-    echo "    .venv/bin/python diarize.py"
+    echo "    .venv/bin/python transcribe.py"
 else
     echo
     echo "For speaker labels (who said what), re-run as:"

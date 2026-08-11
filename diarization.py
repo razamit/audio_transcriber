@@ -1,38 +1,24 @@
 #!/usr/bin/env python3
-"""Transcription with speaker labels ("who said what").
-
-Runs two models over the same audio and merges them by timestamp:
-
-  1. pyannote.audio  -> speaker turns  (who spoke when, no words)
-  2. mlx-whisper     -> text segments  (what was said, no speaker)
+"""Running pyannote: working out who spoke when, and merging that into text.
 
 Whisper has no concept of speakers and pyannote has no concept of words, so
-neither can do this alone. The merge assigns each Whisper segment to whichever
-speaker overlaps it most in time.
+neither model can produce "who said what" alone. This module runs the speaker
+side and merges it into Whisper's segments by timestamp, assigning each segment
+to whichever speaker overlaps it most.
 
-Speakers come out as SPEAKER_00, SPEAKER_01... — the model separates voices,
-it does not know their names.
+pyannote is language-agnostic — it clusters voice timbre and never sees the
+words — so nothing here depends on the language profile.
 
-pyannote is language-agnostic, so only the Whisper half depends on the chosen
-language profile.
+Every heavy import (torch, pyannote) is deliberately inside a function: this
+module must be importable when the diarization extras are not installed, so the
+single entry point can offer speaker labelling and explain how to enable it
+rather than dying on an ImportError at startup.
 """
 
+import importlib.util
 import os
 import sys
-import time
-import traceback
 from collections import defaultdict
-
-from profiles import prompt_for_profile
-from speaker_names import name_speakers_in_file
-from transcribe import (
-    announce_first_run_download,
-    build_output_path,
-    format_timestamp,
-    prompt_for_audio_path,
-    require_ffmpeg,
-    run_transcription,
-)
 
 # The community re-upload of pyannote's Community-1 pipeline. Functionally the
 # same CC-BY-4.0 pipeline as pyannote/speaker-diarization-community-1, but
@@ -50,7 +36,6 @@ from transcribe import (
 DIARIZATION_REPO = "pyannote-community/speaker-diarization-community-1"
 DIARIZATION_REVISION = "8a527374977391da736e0daaef26855d949d9685"
 
-PARAGRAPH_GAP_SECONDS = 2.0
 UNKNOWN_SPEAKER = "UNKNOWN"
 
 # pyannote.audio 4.x bundles OpenTelemetry metrics that are enabled by default
@@ -63,6 +48,20 @@ UNKNOWN_SPEAKER = "UNKNOWN"
 # setdefault, and before pyannote is imported: the package reads this variable
 # at import time and falls back to its bundled config.yaml if it is unset.
 os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
+
+INSTALL_HELP = """\
+Speaker labelling needs the diarization extras, which are not installed.
+
+They live in a separate requirements file because they pull PyTorch and friends
+— roughly 1.2GB on top of the base install — and plain transcription does not
+need any of it. Install them with:
+
+    ./setup.sh --with-diarization
+
+or directly:
+
+    .venv/bin/pip install -r requirements-diarize.txt
+"""
 
 DOWNLOAD_HELP = f"""\
 Could not download {DIARIZATION_REPO}.
@@ -81,8 +80,13 @@ or export it for this shell:
 
 
 # --------------------------------------------------------------------------
-# Model setup
+# Availability and model setup
 # --------------------------------------------------------------------------
+
+def diarization_is_available():
+    """True if pyannote.audio can be imported, without actually importing it."""
+    return importlib.util.find_spec("pyannote.audio") is not None
+
 
 def optional_hf_token():
     """A HuggingFace token if one happens to be configured, otherwise None.
@@ -112,6 +116,7 @@ def load_diarization_pipeline(token):
     MPS is preferred but not every pyannote op has a Metal kernel, so a
     failure to move the pipeline falls back to CPU rather than dying.
     """
+    import torch
     from pyannote.audio import Pipeline
 
     try:
@@ -130,7 +135,7 @@ def load_diarization_pipeline(token):
         pipeline.to(device)
     except Exception as exc:
         print(f"  Could not use {device} ({exc}); falling back to CPU.")
-        device = __import__("torch").device("cpu")
+        device = torch.device("cpu")
         pipeline.to(device)
 
     print(f"  Diarization running on: {device}")
@@ -154,7 +159,7 @@ def prompt_for_speaker_count():
 
 
 # --------------------------------------------------------------------------
-# Diarization and merging
+# Speaker turns
 # --------------------------------------------------------------------------
 
 def as_annotation(output):
@@ -187,6 +192,10 @@ def extract_speaker_turns(pipeline, audio_path, speaker_count):
     turns.sort(key=lambda turn: turn[0])
     return turns
 
+
+# --------------------------------------------------------------------------
+# Merging speakers into transcript segments
+# --------------------------------------------------------------------------
 
 def dominant_speaker(segment_start, segment_end, turns):
     """The speaker overlapping [start, end] the longest, or None."""
@@ -226,108 +235,3 @@ def label_segments(segments, turns):
         )
 
     return labelled
-
-
-# --------------------------------------------------------------------------
-# Output
-# --------------------------------------------------------------------------
-
-def summarize_speakers(labelled):
-    """Header lines listing each speaker and how long they talked."""
-    talk_time = defaultdict(float)
-    for entry in labelled:
-        talk_time[entry["speaker"]] += entry["end"] - entry["start"]
-
-    total = sum(talk_time.values()) or 1.0
-    identified = [name for name in talk_time if name != UNKNOWN_SPEAKER]
-
-    lines = [f"{len(identified)} speaker(s) detected:"]
-    for speaker, seconds in sorted(talk_time.items(), key=lambda kv: -kv[1]):
-        share = 100.0 * seconds / total
-        note = "  (no speaker matched this span)" if speaker == UNKNOWN_SPEAKER else ""
-        lines.append(
-            f"  {speaker}  {format_timestamp(seconds)}  ({share:.0f}%){note}"
-        )
-    lines.append("")
-    return lines
-
-
-def render_labelled_segments(labelled):
-    """`[HH:MM:SS] SPEAKER_00: text`, blank line on speaker change or pause."""
-    lines = []
-    previous_end = None
-    previous_speaker = None
-
-    for entry in labelled:
-        speaker_changed = previous_speaker is not None and entry["speaker"] != previous_speaker
-        long_pause = (
-            previous_end is not None
-            and entry["start"] - previous_end > PARAGRAPH_GAP_SECONDS
-        )
-        if speaker_changed or long_pause:
-            lines.append("")
-
-        stamp = format_timestamp(entry["start"])
-        lines.append(f"[{stamp}] {entry['speaker']}: {entry['text']}")
-        previous_end = entry["end"]
-        previous_speaker = entry["speaker"]
-
-    return lines
-
-
-def write_labelled_transcript(output_path, labelled):
-    """Write the merged transcript as UTF-8 without a BOM."""
-    lines = summarize_speakers(labelled) + render_labelled_segments(labelled)
-    with open(output_path, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write("\n".join(lines) + "\n")
-
-
-# --------------------------------------------------------------------------
-# Main
-# --------------------------------------------------------------------------
-
-def main():
-    require_ffmpeg()
-    token = optional_hf_token()
-
-    profile = prompt_for_profile()
-    audio_path = prompt_for_audio_path()
-    speaker_count = prompt_for_speaker_count()
-    output_path = build_output_path(audio_path, suffix="_speakers")
-
-    announce_first_run_download(profile)
-    started = time.monotonic()
-
-    try:
-        print("\nLoading diarization pipeline ...")
-        pipeline = load_diarization_pipeline(token)
-
-        print("Detecting speaker turns ...")
-        turns = extract_speaker_turns(pipeline, audio_path, speaker_count)
-        print(f"  {len(turns)} turn(s) found.")
-
-        print(f"\nTranscribing {audio_path} as {profile.label} ...")
-        result = run_transcription(audio_path, profile)
-    except Exception:
-        print("\nFailed:\n", file=sys.stderr)
-        traceback.print_exc()
-        sys.exit(1)
-
-    labelled = label_segments(result.get("segments") or [], turns)
-    if not labelled:
-        sys.exit("No speech was transcribed; nothing to write.")
-
-    elapsed = time.monotonic() - started
-    write_labelled_transcript(output_path, labelled)
-
-    print(f"\nTranscript written to: {os.path.abspath(output_path)}")
-    print(f"Elapsed: {format_timestamp(elapsed)} ({elapsed:.1f}s)")
-
-    # Naming happens after the file is safely on disk, never before: the
-    # expensive work is already saved, so abandoning this prompt costs nothing
-    # and the transcript survives exactly as diarization produced it.
-    name_speakers_in_file(output_path)
-
-
-if __name__ == "__main__":
-    main()
