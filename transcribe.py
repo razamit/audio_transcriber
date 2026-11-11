@@ -9,6 +9,10 @@ next to the input file:
     Label speakers? [y/N]: y
     Number of speakers (press Enter to auto-detect): 3
 
+Given any arguments, it runs without prompts instead (see cli.py):
+
+    .venv/bin/python transcribe.py --file call.m4a --lang en --speakers auto --json
+
 Everything below is orchestration only — prompts, ordering, and error
 handling. The work lives in dedicated modules: profiles.py (which model for
 which language), paths.py (input/output paths), transcription.py (Whisper),
@@ -32,6 +36,7 @@ from profiles import prompt_for_profile
 from speaker_names import name_speakers_in_file
 from transcript_output import (
     format_timestamp,
+    identified_speakers,
     write_labelled_transcript,
     write_transcript,
 )
@@ -65,7 +70,7 @@ def transcribe_only(audio_path, profile, output_path):
 
 
 def transcribe_with_speakers(audio_path, profile, output_path, speaker_count):
-    """pyannote then Whisper, merged by timestamp.
+    """pyannote then Whisper, merged by timestamp. Returns the speaker count.
 
     Diarization runs first so that a missing model or a bad audio file fails
     before spending minutes on transcription.
@@ -84,9 +89,20 @@ def transcribe_with_speakers(audio_path, profile, output_path, speaker_count):
     if not labelled:
         sys.exit("No speech was transcribed; nothing to write.")
     write_labelled_transcript(output_path, labelled)
+    return len(identified_speakers(labelled))
 
 
-def main():
+def main(argv=None):
+    """Prompts with no arguments; flags-only, never prompting, with any."""
+    argv = sys.argv[1:] if argv is None else argv
+    if argv:
+        import cli
+
+        sys.exit(cli.run(argv, transcribe_only, transcribe_with_speakers))
+    run_interactive()
+
+
+def run_interactive():
     require_ffmpeg()
 
     profile = prompt_for_profile()

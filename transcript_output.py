@@ -68,6 +68,12 @@ def write_transcript(output_path, segments, fallback_text):
 # Speaker-labelled transcripts
 # --------------------------------------------------------------------------
 
+def identified_speakers(labelled):
+    """Distinct speaker labels in first-spoken order, excluding UNKNOWN."""
+    seen = dict.fromkeys(entry["speaker"] for entry in labelled)
+    return [name for name in seen if name != UNKNOWN_SPEAKER]
+
+
 def summarize_speakers(labelled):
     """Header lines listing each speaker and how long they talked."""
     talk_time = defaultdict(float)
@@ -75,7 +81,7 @@ def summarize_speakers(labelled):
         talk_time[entry["speaker"]] += entry["end"] - entry["start"]
 
     total = sum(talk_time.values()) or 1.0
-    identified = [name for name in talk_time if name != UNKNOWN_SPEAKER]
+    identified = identified_speakers(labelled)
 
     lines = [f"{len(identified)} speaker(s) detected:"]
     for speaker, seconds in sorted(talk_time.items(), key=lambda kv: -kv[1]):

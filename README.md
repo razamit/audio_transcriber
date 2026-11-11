@@ -75,6 +75,58 @@ TRANSCRIBE_LANG=en .venv/bin/python transcribe.py
 An unrecognized value is an error rather than a silent fallback, so a typo
 can't quietly transcribe an hour of audio with the wrong model.
 
+## Scripting
+
+Give `transcribe.py` any argument and it runs without prompts, for use from
+other tools and scripts. With no arguments it behaves exactly as above.
+
+```
+.venv/bin/python transcribe.py --file PATH --lang he|en
+                               [--speakers auto|N]
+                               [--out PATH]
+                               [--json]
+.venv/bin/python transcribe.py --capabilities
+```
+
+| Flag | Meaning |
+|------|---------|
+| `--file PATH` | The audio file. Required. |
+| `--lang he\|en` | Required unless `TRANSCRIBE_LANG` is set. The flag wins if both are given. |
+| `--speakers auto\|N` | Label speakers. `auto` lets the model count them; `N` fixes the count. Without it there is no diarization. |
+| `--out PATH` | Write exactly here instead of next to the audio. If the file already exists the run stops with exit code 2; it is never overwritten. |
+| `--json` | Print the result as one JSON line instead of the bare path. |
+| `--capabilities` | Print what this install can do, then exit. |
+
+stdout carries a single line: the transcript path, or with `--json`:
+
+```
+{"output": "/path/call.txt", "language": "en", "speakers": null, "elapsed_s": 87.1}
+```
+
+`speakers` is the number of speakers found, or `null` without `--speakers`.
+Everything else, including Whisper's running output and model download
+progress, goes to stderr. A flag run never prompts, so the speaker-naming step
+is skipped. To add names afterwards, run `.venv/bin/python name_speakers.py`
+and give it the transcript when it asks.
+
+`--capabilities` prints `{"diarization": true, "languages": ["he", "en"], "version": "1.0.0"}`.
+`diarization` is false when the extras from `./setup.sh --with-diarization` are
+not installed.
+
+| Exit code | Meaning |
+|-----------|---------|
+| 0 | Transcript written |
+| 1 | Error during transcription, including an input file ffmpeg cannot decode |
+| 2 | Bad arguments, unreadable input file, unknown language, or `--out` already exists |
+| 3 | `--speakers` given but the diarization extras are not installed |
+| 4 | ffmpeg not found |
+
+Tests cover both modes and need no model download:
+
+```
+.venv/bin/python -m unittest discover -s tests -t .
+```
+
 ## How it works
 
 Two models run over the same audio and their results are merged by timestamp.
@@ -350,6 +402,8 @@ already have.
 | File | Responsibility |
 |------|----------------|
 | `transcribe.py` | Prompts, ordering, error handling. No model code. |
+| `cli.py` | The no-prompt mode: flags, exit codes, the stdout result line |
+| `version.py` | The version `--capabilities` reports |
 | `profiles.py` | Which Whisper model goes with which language |
 | `paths.py` | Drag-and-drop path cleanup, output naming, ffmpeg check |
 | `transcription.py` | Running Whisper |
@@ -358,6 +412,7 @@ already have.
 | `transcript_output.py` | Rendering and writing both transcript formats |
 | `speaker_names.py` | Replacing `SPEAKER_00` with real names |
 | `name_speakers.py` | Entry point for naming an existing transcript |
+| `tests/` | Unit tests for both modes; no model download |
 
 Two details that look odd but are deliberate:
 
