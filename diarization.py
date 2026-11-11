@@ -20,6 +20,8 @@ import os
 import sys
 from collections import defaultdict
 
+from audio_decoding import decode_to_waveform
+
 # The community re-upload of pyannote's Community-1 pipeline. Functionally the
 # same CC-BY-4.0 pipeline as pyannote/speaker-diarization-community-1, but
 # ungated: it downloads with no HuggingFace account, so `git clone && setup.sh`
@@ -183,7 +185,9 @@ def as_annotation(output):
 def extract_speaker_turns(pipeline, audio_path, speaker_count):
     """Run diarization and flatten it to (start, end, speaker) tuples."""
     kwargs = {"num_speakers": speaker_count} if speaker_count else {}
-    annotation = as_annotation(pipeline(audio_path, **kwargs))
+    # Decoded here rather than handing pyannote the path: its own decoder
+    # (torchcodec) aborts on a single malformed frame. See audio_decoding.py.
+    annotation = as_annotation(pipeline(decode_to_waveform(audio_path), **kwargs))
 
     turns = [
         (segment.start, segment.end, speaker)

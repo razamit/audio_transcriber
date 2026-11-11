@@ -17,7 +17,7 @@ is a one-time download of model weights.
 - **Apple Silicon Mac (M1 or newer).** Hard requirement, not a recommendation —
   see the note above.
 - Python 3.10 or newer
-- `ffmpeg` on your `PATH`, used by Whisper to decode audio:
+- `ffmpeg` on your `PATH`, used to decode audio for both models:
   ```
   brew install ffmpeg
   ```
@@ -353,6 +353,7 @@ already have.
 | `profiles.py` | Which Whisper model goes with which language |
 | `paths.py` | Drag-and-drop path cleanup, output naming, ffmpeg check |
 | `transcription.py` | Running Whisper |
+| `audio_decoding.py` | Decoding audio for pyannote through ffmpeg, tolerating bad frames |
 | `diarization.py` | Running pyannote; merging speakers into segments |
 | `transcript_output.py` | Rendering and writing both transcript formats |
 | `speaker_names.py` | Replacing `SPEAKER_00` with real names |
