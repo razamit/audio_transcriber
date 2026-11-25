@@ -150,12 +150,14 @@ class CandidateFolderTests(unittest.TestCase):
         return lambda name: (types.SimpleNamespace(submodule_search_locations=locations[name])
                              if name in locations else None)
 
-    def test_nvidia_package_folders_then_torch_lib(self):
+    def test_torch_lib_then_nvidia_package_folders(self):
+        # torch first: its bundled cuDNN must be the one in the process, or a
+        # later `import torch` for diarization fails on a mismatched cuDNN.
         locations = {"nvidia": [os.path.join("site", "nvidia")], "torch": [os.path.join("site", "torch")]}
         expected_windows = [
+            os.path.join("site", "torch", "lib"),
             os.path.join("site", "nvidia", "cublas", "bin"),
             os.path.join("site", "nvidia", "cudnn", "bin"),
-            os.path.join("site", "torch", "lib"),
         ]
         folders = candidate_library_folders(
             "win32", find_spec=self.fake_spec(locations),

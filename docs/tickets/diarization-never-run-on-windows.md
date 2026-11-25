@@ -1,6 +1,15 @@
 # Speaker labelling (diarization) has never been run on Windows
 
-Status: OPEN · Priority: MEDIUM · Type: verification gap · Cost: none
+Status: CLOSED 2026-11-25 · Priority: MEDIUM · Type: verification gap · Cost: none
+
+> **Resolution (2026-11-25).** Run for real; it was broken, and is fixed. The
+> first `--speakers auto` run died at `import torch` with
+> `OSError: [WinError 127] ... torch\lib\cudnn_cnn64_9.dll`: the GPU probe had
+> already loaded cuDNN 9.28 from `nvidia-cudnn-cu12`, and torch's bundled
+> cuDNN 9.10 bound to it. `candidate_library_folders()` now probes `torch/lib`
+> first (decision row 3). After the fix: exit 0, both stages on `cuda`, 590
+> turns, 5 speakers, 551 lines, 118.5 s cached (122.8 s with the pyannote
+> download). Timings are in README's Speed section; see `docs/PROGRESS.md`.
 
 > Found during the 2026-11-25 Windows GPU verification (see `docs/PROGRESS.md`).
 > Unrelated to `hf-symlink-warning-floods-stderr-on-windows.md`.

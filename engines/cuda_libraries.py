@@ -58,17 +58,23 @@ def package_folders(package_name, find_spec=importlib.util.find_spec):
 
 def candidate_library_folders(platform_name, find_spec=importlib.util.find_spec,
                               list_folder=os.listdir, is_folder=os.path.isdir):
-    """Existing folders that may hold the CUDA libraries, most specific first."""
+    """Existing folders that may hold the CUDA libraries: torch's first, then nvidia.*.
+
+    A CUDA build of torch on Windows bundles its own cuDNN 9 in torch/lib, with
+    the same file names as the nvidia-cudnn-cu12 pip package but usually a
+    different 9.x. Only one copy of each name can live in a process: if the
+    pip copy loads first, `import torch` later fails with WinError 127 on
+    cudnn_cnn64_9.dll. Probing torch/lib first makes CTranslate2 and torch
+    share torch's copy. Without torch, the nvidia.* packages are all there is.
+    """
     subfolder = NVIDIA_LIBRARY_SUBFOLDER.get(platform_name, "lib")
-    folders = []
+    folders = [os.path.join(torch_root, "lib") for torch_root in package_folders("torch", find_spec)]
     for nvidia_root in package_folders("nvidia", find_spec):
         try:
             children = sorted(list_folder(nvidia_root))
         except OSError:
             continue
         folders.extend(os.path.join(nvidia_root, child, subfolder) for child in children)
-    for torch_root in package_folders("torch", find_spec):
-        folders.append(os.path.join(torch_root, "lib"))
     return [folder for folder in folders if is_folder(folder)]
 
 

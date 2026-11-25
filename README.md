@@ -26,13 +26,14 @@ Intel Macs get faster-whisper on the CPU, but that combination has not been
 tested. Speaker labelling cannot be installed on an Intel Mac at all: PyTorch
 no longer publishes Intel Mac builds new enough for pyannote.
 
-> **What has been run for real.** On Windows 11 with an NVIDIA RTX 4090:
-> `py install.py --gpu` and a Hebrew transcription on the GPU (see
-> [Speed](#speed)). The CPU path of faster-whisper has been run on a Mac,
-> forced with `TRANSCRIBE_ENGINE=faster-whisper`. Not yet run: speaker
-> labelling on Windows or Linux, faster-whisper on Linux, and the CPU path on
-> Windows. Those are built from the library documentation and covered by unit
-> tests with fakes.
+> **What has been run for real.** On Windows 11 with an NVIDIA RTX 4090 and
+> an Intel i9-14900K: `py install.py --gpu --with-diarization`, and a Hebrew
+> transcription on the GPU, on the CPU, and with speaker labels on the GPU
+> (see [Speed](#speed)). The CPU path of faster-whisper has also been run on a
+> Mac, forced with `TRANSCRIBE_ENGINE=faster-whisper`. Not yet run: anything on
+> Linux, and speaker labelling on a Windows machine without an NVIDIA GPU.
+> Those are built from the library documentation and covered by unit tests
+> with fakes.
 
 ## Requirements
 
@@ -97,6 +98,12 @@ It installs cuBLAS for CUDA 12 and cuDNN 9 from pip (`nvidia-cublas-cu12`,
 `https://download.pytorch.org/whl/cu126` before pyannote, so speaker labelling
 uses the GPU too. Any torch already installed is removed first, because pip
 would otherwise keep an existing CPU build as "already satisfied".
+
+On Windows the CUDA build of torch carries its own cuDNN 9, with the same file
+names as `nvidia-cudnn-cu12` but a different version. A process can hold only
+one of them, so when torch is installed faster-whisper uses torch's copy too;
+otherwise speaker labelling fails at `import torch` with `WinError 127` on
+`cudnn_cnn64_9.dll`.
 
 At startup the tool checks that a GPU exists *and* that those libraries load.
 If the GPU is there but the libraries are not, it prints one line saying so and
@@ -286,11 +293,27 @@ transcription only:
 | Model already cached | 98 s |
 
 That is about 17 times faster than realtime, with the full large-v3 model
-rather than turbo. Speaker labelling on Windows has not been timed yet.
+rather than turbo.
 
-There are no measurements yet for faster-whisper on Linux, or on the CPU
-anywhere. Expect the CPU to be much slower than either GPU path, which is why
-Hebrew uses the turbo model there (see [Models](#models)).
+The same file and machine, other modes (models already cached):
+
+| Mode | Device | Time | Speed |
+|------|--------|------|-------|
+| Transcription + speaker labels (5 speakers found) | `cuda (float16)` for both | 119 s | 14× realtime |
+| Transcription only, CPU | `cpu (int8, 16 threads)`, i9-14900K, turbo model | 271 s | 6.2× realtime |
+| Transcription only, CPU, simulating an 8-core laptop | `cpu (int8, 4 threads)`, same chip | 379 s | 4.4× realtime |
+
+Speaker labels add about 20 seconds on the GPU. The first speaker-labelled
+run took 123 s, including the one-time pyannote model download. The CPU was
+forced with `CUDA_VISIBLE_DEVICES=-1`; the 4-thread row is the same chip
+limited to the thread count the tool picks on an 8-core machine, so a real
+laptop, with slower cores, will be slower than that row.
+
+For a 1-hour podcast that projects to about 4 minutes on this GPU, 10 minutes
+on this CPU, and 13–14 minutes at 4 threads. On an ordinary laptop CPU expect
+roughly 15–30 minutes. That is an estimate, not a measurement.
+
+There are no measurements yet for faster-whisper on Linux.
 
 ## Models
 
