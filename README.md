@@ -26,10 +26,13 @@ Intel Macs get faster-whisper on the CPU, but that combination has not been
 tested. Speaker labelling cannot be installed on an Intel Mac at all: PyTorch
 no longer publishes Intel Mac builds new enough for pyannote.
 
-> **The NVIDIA GPU path has not been run on real hardware yet.** It is built
-> from the library documentation and covered by unit tests with fakes. The CPU
-> path of faster-whisper has been run for real (on a Mac, forced with
-> `TRANSCRIBE_ENGINE=faster-whisper`); the Windows install and run have not.
+> **What has been run for real.** On Windows 11 with an NVIDIA RTX 4090:
+> `py install.py --gpu` and a Hebrew transcription on the GPU (see
+> [Speed](#speed)). The CPU path of faster-whisper has been run on a Mac,
+> forced with `TRANSCRIBE_ENGINE=faster-whisper`. Not yet run: speaker
+> labelling on Windows or Linux, faster-whisper on Linux, and the CPU path on
+> Windows. Those are built from the library documentation and covered by unit
+> tests with fakes.
 
 ## Requirements
 
@@ -250,7 +253,9 @@ Step by step:
    overlaps it most in time. A segment overlapping no turn is labelled
    `UNKNOWN` rather than dropped or guessed at.
 5. **Render.** Lines get `HH:MM:SS` timestamps, with a blank line at every long
-   pause and at every speaker change.
+   pause and at every speaker change. Invisible text-direction characters the
+   Hebrew model sometimes emits (such as U+202B) are removed, so the
+   transcript searches cleanly.
 6. **Name.** The file is written, and *then* you are offered the chance to
    replace `SPEAKER_00` with real names.
 
@@ -271,9 +276,21 @@ total is still under 90 seconds for a 41-minute call — so the old advice to
 skip it for speed no longer applies. Short clips are dominated by model loading
 rather than audio length.
 
-There are no measurements yet for faster-whisper on Windows or Linux, on a GPU
-or on the CPU. Expect the CPU to be much slower than either GPU path, which is
-why Hebrew uses the turbo model there (see [Models](#models)).
+Measured on a 28-minute recording, Windows 11, NVIDIA RTX 4090
+(faster-whisper, `cuda (float16)`, `ivrit-ai/whisper-large-v3-ct2`), Hebrew,
+transcription only:
+
+| Run | Time |
+|-----|------|
+| First run, including the one-time 3.1 GB model download | 132 s |
+| Model already cached | 98 s |
+
+That is about 17 times faster than realtime, with the full large-v3 model
+rather than turbo. Speaker labelling on Windows has not been timed yet.
+
+There are no measurements yet for faster-whisper on Linux, or on the CPU
+anywhere. Expect the CPU to be much slower than either GPU path, which is why
+Hebrew uses the turbo model there (see [Models](#models)).
 
 ## Models
 

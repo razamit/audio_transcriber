@@ -27,7 +27,9 @@ class WindowsPathInputTests(ScratchFolderTestCase):
                          r"C:\Users\amit\My Recordings\call.m4a")
 
     def test_mac_still_unescapes_drag_and_drop(self):
-        spaced = os.path.join(self.folder, "my call.m4a")
+        # Forward slashes so the test also runs on Windows, where the scratch
+        # folder's own backslashes would otherwise be unescaped away.
+        spaced = self.folder.replace("\\", "/") + "/my call.m4a"
         with open(spaced, "wb") as handle:
             handle.write(b"x")
         dragged = spaced.replace(" ", "\\ ")
@@ -135,7 +137,8 @@ class Utf8StreamTests(unittest.TestCase):
 
     def test_a_real_cp1252_stream_can_print_hebrew_afterwards(self):
         raw = io.BytesIO()
-        stream = io.TextIOWrapper(raw, encoding="cp1252")
+        # newline="\n" so Windows does not turn the line break into \r\n.
+        stream = io.TextIOWrapper(raw, encoding="cp1252", newline="\n")
         with self.assertRaises(UnicodeEncodeError):
             stream.write("שלום")
             stream.flush()

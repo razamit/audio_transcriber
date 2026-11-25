@@ -11,11 +11,25 @@ transcripts open correctly everywhere rather than picking up a stray marker
 that some editors surface as text.
 """
 
+import re
 from collections import defaultdict
 
 from diarization import UNKNOWN_SPEAKER
 
 PARAGRAPH_GAP_SECONDS = 2.0
+
+# Invisible bidi control characters: LRM, RLM, ALM, the embeddings and
+# overrides (LRE, RLE, PDF, LRO, RLO) and the isolates (LRI, RLI, FSI, PDI).
+# The Hebrew model emits some of them (mostly RLE, U+202B), sometimes in the
+# middle of a line. They are invisible in most editors but break searching and
+# any further processing of the text, and a plain-text editor already lays out
+# Hebrew right to left without them.
+_BIDI_CONTROLS = re.compile("[\u200e\u200f\u061c\u202a-\u202e\u2066-\u2069]")
+
+
+def clean_text(text):
+    """Segment text without bidi control characters or surrounding whitespace."""
+    return _BIDI_CONTROLS.sub("", text or "").strip()
 
 
 def format_timestamp(seconds):
@@ -42,7 +56,7 @@ def render_segments(segments):
     previous_end = None
 
     for segment in segments:
-        text = (segment.get("text") or "").strip()
+        text = clean_text(segment.get("text"))
         if not text:
             continue
 
@@ -60,7 +74,7 @@ def write_transcript(output_path, segments, fallback_text):
     body = render_segments(segments)
     if not body:
         # No usable segments; fall back to the flat blob rather than an empty file.
-        body = (fallback_text or "").strip() + "\n"
+        body = clean_text(fallback_text) + "\n"
     _write_utf8(output_path, body)
 
 
@@ -101,6 +115,10 @@ def render_labelled_segments(labelled):
     previous_speaker = None
 
     for entry in labelled:
+        text = clean_text(entry["text"])
+        if not text:
+            continue
+
         speaker_changed = previous_speaker is not None and entry["speaker"] != previous_speaker
         long_pause = (
             previous_end is not None
@@ -110,7 +128,7 @@ def render_labelled_segments(labelled):
             lines.append("")
 
         stamp = format_timestamp(entry["start"])
-        lines.append(f"[{stamp}] {entry['speaker']}: {entry['text']}")
+        lines.append(f"[{stamp}] {entry['speaker']}: {text}")
         previous_end = entry["end"]
         previous_speaker = entry["speaker"]
 
