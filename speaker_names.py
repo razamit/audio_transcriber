@@ -18,6 +18,8 @@ import os
 import re
 import sys
 
+from terminal_bidi import for_display
+
 # "[00:12:34] SPEAKER_01: some text" — the timestamp is consumed first so the
 # colons inside it cannot be mistaken for the speaker/text separator.
 SEGMENT_PATTERN = re.compile(r"^(\[\d{2}:\d{2}:\d{2}\] )([^:]+)(: )(.*)$")
@@ -102,14 +104,15 @@ def prompt_for_names(summaries):
 
     for summary in summaries:
         speaker = summary["speaker"]
-        print(f"{speaker} — {summary['count']} segment(s)")
+        print(f"{for_display(speaker)} - {summary['count']} segment(s)")
         for stamp, spoken in summary["samples"]:
+            # Cut in logical order first, so the visible part is the start.
             excerpt = spoken if len(spoken) <= 90 else spoken[:87] + "..."
-            print(f"  [{stamp}] {excerpt}")
+            print(for_display(f"  [{stamp}] {excerpt}"))
 
         while True:
             try:
-                raw = input(f"Name (Enter to keep {speaker}): ")
+                raw = input(f"Name (Enter to keep {for_display(speaker)}): ")
             except (EOFError, KeyboardInterrupt):
                 print("\n  Stopping here; names chosen so far will be applied.")
                 return mapping
@@ -134,8 +137,9 @@ def warn_on_duplicates(mapping):
 
     for name, speakers in used.items():
         if len(speakers) > 1:
-            print(f"  Note: {' and '.join(sorted(speakers))} are both named "
-                  f"{name!r}; they stay separate rows in the summary.")
+            labels = " and ".join(for_display(label) for label in sorted(speakers))
+            print(f"  Note: {labels} are both named "
+                  f"{for_display(name)!r}; they stay separate rows in the summary.")
 
 
 # --------------------------------------------------------------------------
@@ -190,7 +194,10 @@ def name_speakers_in_file(path):
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(rename_in_text(text, mapping))
 
-    renamed = ", ".join(f"{old} -> {new}" for old, new in sorted(mapping.items()))
+    # Each name is reordered on its own so the arrows and commas between
+    # them keep their left-to-right places.
+    renamed = ", ".join(f"{for_display(old)} -> {for_display(new)}"
+                        for old, new in sorted(mapping.items()))
     print(f"Renamed {renamed}")
     return True
 

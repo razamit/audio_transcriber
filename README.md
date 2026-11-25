@@ -1,28 +1,51 @@
 # audio_transcriber
 
-Local Hebrew and English audio transcription on Apple Silicon, with optional
-speaker labels. One interactive Python script: point it at a recording, get a
-timestamped transcript — and, if you want, one that says who said what.
+Local Hebrew and English audio transcription on macOS, Windows and Linux, with
+optional speaker labels. One interactive Python script: point it at a
+recording, get a timestamped transcript, and, if you want, one that says who
+said what.
 
-Nothing is uploaded. Every model runs on your Mac, and the only network access
-is a one-time download of model weights.
+Nothing is uploaded. Every model runs on your computer, and the only network
+access is a one-time download of model weights.
 
-> **Apple Silicon only.** This runs on M-series Macs and nowhere else. It is
-> built on Apple's MLX framework, which is Metal-backed and has no CPU or CUDA
-> fallback, so it will not run on an Intel Mac, on Linux, or on Windows —
-> including under Docker or a VM on those hosts.
+Whisper runs on one of two engines, picked automatically:
+
+| Machine | Engine | Runs on |
+|---------|--------|---------|
+| Apple Silicon Mac (M1 or newer) | [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper) | The Mac's GPU, through MLX |
+| Windows (x64), Linux, Intel Mac | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2) | An NVIDIA GPU if set up, otherwise the CPU |
+
+Both engines use the same decoding settings, both decode greedily, and both
+use the same model family per language. Transcripts from different machines
+are close but not identical: the engines are separate implementations, the CPU
+runs 8-bit weights, and Hebrew on the CPU uses the smaller turbo model (see
+[Models](#models)). Windows on ARM is not supported: CTranslate2 publishes no
+package for it.
+
+Intel Macs get faster-whisper on the CPU, but that combination has not been
+tested. Speaker labelling cannot be installed on an Intel Mac at all: PyTorch
+no longer publishes Intel Mac builds new enough for pyannote.
+
+> **The NVIDIA GPU path has not been run on real hardware yet.** It is built
+> from the library documentation and covered by unit tests with fakes. The CPU
+> path of faster-whisper has been run for real (on a Mac, forced with
+> `TRANSCRIBE_ENGINE=faster-whisper`); the Windows install and run have not.
 
 ## Requirements
 
-- **Apple Silicon Mac (M1 or newer).** Hard requirement, not a recommendation —
-  see the note above.
 - Python 3.10 or newer
 - `ffmpeg` on your `PATH`, used to decode audio for both models:
   ```
-  brew install ffmpeg
+  brew install ffmpeg        # macOS
+  winget install ffmpeg      # Windows, then open a new terminal
+  sudo apt install ffmpeg    # Debian and Ubuntu; use your distribution's package manager
   ```
+- For GPU transcription on Windows or Linux: an NVIDIA GPU with a current
+  driver. The CUDA libraries themselves come from pip (see `--gpu` below).
 
 ## Setup
+
+macOS and Linux:
 
 ```
 git clone <your-repo-url>
@@ -31,21 +54,65 @@ cd audio_transcriber
 ./setup.sh --with-diarization   # transcription + speaker labels
 ```
 
-`setup.sh` verifies ffmpeg is installed, creates `.venv`, and installs
-`mlx-whisper`. The `--with-diarization` flag adds `pyannote.audio` on top.
+Windows (PowerShell or Command Prompt):
 
-That flag is the only real decision at setup time. Speaker labelling needs
-PyTorch, which is **~1.2 GB** of dependencies that plain transcription never
-touches, so it is kept separate rather than imposed on everyone. You can add it
-later by re-running with the flag; nothing else changes.
+```
+git clone <your-repo-url>
+cd audio_transcriber
+py install.py                      # transcription only
+py install.py --with-diarization   # transcription + speaker labels
+```
+
+`py` starts the newest Python installed. faster-whisper needs onnxruntime,
+which has no prebuilt package for Python 3.15 yet, so on 3.15 or newer the
+installer warns that the install may fail. If it does, pick an older Python,
+for example `py -3.13 install.py`.
+
+`install.py` does the work on every platform; `setup.sh` just runs it with the
+same arguments. It checks the Python version and ffmpeg, creates `.venv`, and
+installs `requirements.txt`, whose markers pick `mlx-whisper` on Apple Silicon
+and `faster-whisper` everywhere else. The `--with-diarization` flag adds
+`pyannote.audio` on top.
+
+`--with-diarization` is the main decision at setup time. Speaker labelling
+needs PyTorch, which is **~1.2 GB** of dependencies that plain transcription
+never touches, so it is kept separate rather than imposed on everyone. You can
+add it later by re-running with the flag; nothing else changes.
+
+### NVIDIA GPU (Windows and Linux)
+
+Add `--gpu` to use an NVIDIA GPU:
+
+```
+py install.py --gpu                      # Windows
+./setup.sh --gpu --with-diarization      # Linux, with speaker labels
+```
+
+It installs cuBLAS for CUDA 12 and cuDNN 9 from pip (`nvidia-cublas-cu12`,
+`nvidia-cudnn-cu12`), which faster-whisper needs on the GPU. With
+`--with-diarization` it also installs a CUDA 12 build of PyTorch from
+`https://download.pytorch.org/whl/cu126` before pyannote, so speaker labelling
+uses the GPU too. Any torch already installed is removed first, because pip
+would otherwise keep an existing CPU build as "already satisfied".
+
+At startup the tool checks that a GPU exists *and* that those libraries load.
+If the GPU is there but the libraries are not, it prints one line saying so and
+runs on the CPU instead of crashing partway through. It always prints which
+device it uses, for example `Transcription running on: cuda (float16)` or
+`Transcription running on: cpu (int8, 8 threads)`. If the GPU fails later, such
+as running out of memory on a small card, it prints one line and transcribes
+the file again on the CPU, with the CPU model, and stays on the CPU after that.
 
 ## Usage
 
 ```
-.venv/bin/python transcribe.py
+.venv/bin/python transcribe.py          # macOS, Linux
+.venv\Scripts\python transcribe.py      # Windows
 ```
 
-This is the only script you run. It asks up to four questions:
+This is the only script you run. The examples below use the macOS and Linux
+form; on Windows, use `.venv\Scripts\python` in place of `.venv/bin/python`.
+It asks up to four questions:
 
 ```
 Language: [1] Hebrew  [2] English  (Enter = Hebrew): 2
@@ -54,9 +121,11 @@ Label speakers? [y/N]: y
 Number of speakers (press Enter to auto-detect): 3
 ```
 
-Drag the audio file from Finder into the Terminal window and press Enter, or
-paste a path. Surrounding quotes, drag-and-drop backslash escaping, and `~` are
-all handled. A bad path re-prompts up to three times.
+Drag the audio file from Finder (or File Explorer on Windows) into the
+terminal window and press Enter, or paste a path. Surrounding quotes,
+drag-and-drop backslash escaping on macOS and Linux, and `~` are all handled.
+On Windows a backslash is kept as the path separator it is. A bad path
+re-prompts up to three times.
 
 Answering `n` to speakers skips diarization entirely — no second model, and no
 need for the diarization extras. Answering `y` without those extras installed
@@ -74,6 +143,12 @@ TRANSCRIBE_LANG=en .venv/bin/python transcribe.py
 
 An unrecognized value is an error rather than a silent fallback, so a typo
 can't quietly transcribe an hour of audio with the wrong model.
+
+`TRANSCRIBE_ENGINE=mlx` or `TRANSCRIBE_ENGINE=faster-whisper` overrides the
+engine choice, as long as that engine is installed. It exists mainly to try
+faster-whisper on an Apple Silicon Mac after
+`.venv/bin/python -m pip install faster-whisper==1.2.1`. An unknown value, or an
+engine that is not installed, is an error for the same reason.
 
 ## Scripting
 
@@ -109,9 +184,11 @@ progress, goes to stderr. A flag run never prompts, so the speaker-naming step
 is skipped. To add names afterwards, run `.venv/bin/python name_speakers.py`
 and give it the transcript when it asks.
 
-`--capabilities` prints `{"diarization": true, "languages": ["he", "en"], "version": "1.0.0"}`.
+`--capabilities` prints
+`{"diarization": true, "engine": "mlx", "languages": ["he", "en"], "version": "1.1.0"}`.
 `diarization` is false when the extras from `./setup.sh --with-diarization` are
-not installed.
+not installed. `engine` is `"mlx"`, `"faster-whisper"`, or `null` when neither
+is installed. Version 1.1.0 added the `engine` field.
 
 | Exit code | Meaning |
 |-----------|---------|
@@ -121,7 +198,7 @@ not installed.
 | 3 | `--speakers` given but the diarization extras are not installed |
 | 4 | ffmpeg not found |
 
-Tests cover both modes and need no model download:
+Tests cover both modes and both engines, and need no model download:
 
 ```
 .venv/bin/python -m unittest discover -s tests -t .
@@ -140,7 +217,7 @@ has no concept of words.**
                                    |
                  +-----------------+-----------------+
                  |                                   |
-         pyannote  Community-1                mlx-whisper
+         pyannote  Community-1         mlx-whisper or faster-whisper
          "who spoke when"                     "what was said"
                  |                                   |
    (0.0-4.1, SPEAKER_01)              [00:00:00] Hello, my name is...
@@ -182,7 +259,7 @@ audio fails in seconds rather than after minutes of transcribing.
 
 ### Speed
 
-Measured on a 41-minute recording, Apple Silicon, English:
+Measured on a 41-minute recording, Apple Silicon (mlx-whisper), English:
 
 | Mode | Time |
 |------|------|
@@ -194,24 +271,45 @@ total is still under 90 seconds for a 41-minute call — so the old advice to
 skip it for speed no longer applies. Short clips are dominated by model loading
 rather than audio length.
 
+There are no measurements yet for faster-whisper on Windows or Linux, on a GPU
+or on the CPU. Expect the CPU to be much slower than either GPU path, which is
+why Hebrew uses the turbo model there (see [Models](#models)).
+
 ## Models
 
-Four models across three jobs, all downloaded from HuggingFace into
-`~/.cache/huggingface` on first use and cached forever after.
+Each language has one model per engine and device, and only the ones your
+machine uses are downloaded. They come from HuggingFace into
+`~/.cache/huggingface` (on Windows, `C:\Users\<you>\.cache\huggingface`) on
+first use and are cached forever after.
 
-| Job | Model | Size | License |
-|-----|-------|------|---------|
-| Hebrew speech → text | [`mlx-community/ivrit-ai-whisper-large-v3-mlx`](https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-mlx) | ~3 GB | Apache-2.0 upstream |
-| English speech → text | [`mlx-community/whisper-large-v3-turbo`](https://huggingface.co/mlx-community/whisper-large-v3-turbo) | ~1.6 GB | MIT upstream |
-| Who spoke when | [`pyannote-community/speaker-diarization-community-1`](https://huggingface.co/pyannote-community/speaker-diarization-community-1) | ~33 MB | CC-BY-4.0 |
+| Job | Engine and device | Model | Size | License |
+|-----|-------------------|-------|------|---------|
+| Hebrew speech → text | mlx-whisper | [`mlx-community/ivrit-ai-whisper-large-v3-mlx`](https://huggingface.co/mlx-community/ivrit-ai-whisper-large-v3-mlx) | ~3 GB | Apache-2.0 upstream |
+| Hebrew speech → text | faster-whisper, NVIDIA GPU | [`ivrit-ai/whisper-large-v3-ct2`](https://huggingface.co/ivrit-ai/whisper-large-v3-ct2) | ~3.1 GB | Apache-2.0 |
+| Hebrew speech → text | faster-whisper, CPU | [`ivrit-ai/whisper-large-v3-turbo-ct2`](https://huggingface.co/ivrit-ai/whisper-large-v3-turbo-ct2) | ~1.6 GB | Apache-2.0 |
+| English speech → text | mlx-whisper | [`mlx-community/whisper-large-v3-turbo`](https://huggingface.co/mlx-community/whisper-large-v3-turbo) | ~1.6 GB | MIT upstream |
+| English speech → text | faster-whisper, GPU or CPU | [`mobiuslabsgmbh/faster-whisper-large-v3-turbo`](https://huggingface.co/mobiuslabsgmbh/faster-whisper-large-v3-turbo) | ~1.6 GB | MIT |
+| Who spoke when | either | [`pyannote-community/speaker-diarization-community-1`](https://huggingface.co/pyannote-community/speaker-diarization-community-1) | ~33 MB | CC-BY-4.0 |
+
+**Hebrew on the CPU uses the turbo finetune, not full large-v3.** Full large-v3
+on a CPU is several times slower, too slow to be the default for long
+recordings. The turbo finetune is the same ivrit-ai training on the
+large-v3-turbo base, so it stays a Hebrew model. To trade speed for accuracy,
+point the `ct2-cpu` entry of the Hebrew profile in `profiles.py` at
+`ivrit-ai/whisper-large-v3-ct2`.
+
+The English faster-whisper repo is the one faster-whisper itself uses for the
+name `large-v3-turbo`. Its owner has since been renamed to `dropbox-dash`;
+HuggingFace redirects the old name, and the download is cached under it.
 
 ### Where the Whisper models come from
 
-Both are **MLX format conversions** published by
+On Apple Silicon both are **MLX format conversions** published by
 [mlx-community](https://huggingface.co/mlx-community), the community org that
 republishes models in Apple's MLX format. MLX is what makes these run on the
-Mac's GPU; the conversions are re-encodings of existing weights, not retrained
-models.
+Mac's GPU. Everywhere else they are **CTranslate2 conversions**, the format
+faster-whisper reads. Either way the conversions are re-encodings of existing
+weights, not retrained models.
 
 The lineage:
 
@@ -220,11 +318,17 @@ openai/whisper-large-v3  (MIT)
    |
    +-- ivrit-ai/whisper-large-v3  (Apache-2.0, finetuned on Hebrew)
    |        |
-   |        +-- mlx-community/ivrit-ai-whisper-large-v3-mlx   <- Hebrew profile
+   |        +-- mlx-community/ivrit-ai-whisper-large-v3-mlx   <- Hebrew, mlx-whisper
+   |        +-- ivrit-ai/whisper-large-v3-ct2                 <- Hebrew, NVIDIA GPU
    |
    +-- openai/whisper-large-v3-turbo  (MIT, distilled decoder)
             |
-            +-- mlx-community/whisper-large-v3-turbo          <- English profile
+            +-- ivrit-ai/whisper-large-v3-turbo  (Apache-2.0, finetuned on Hebrew)
+            |        |
+            |        +-- ivrit-ai/whisper-large-v3-turbo-ct2  <- Hebrew, CPU
+            |
+            +-- mlx-community/whisper-large-v3-turbo          <- English, mlx-whisper
+            +-- mobiuslabsgmbh/faster-whisper-large-v3-turbo  <- English, faster-whisper
 ```
 
 [ivrit-ai](https://huggingface.co/ivrit-ai) is an Israeli open-source project
@@ -235,6 +339,9 @@ transcription here markedly better than stock Whisper. It declares
 The English model is OpenAI's `large-v3-turbo` — same encoder as large-v3 with a
 distilled 4-layer decoder, which is why it is roughly 4–5× faster at half the
 size while staying essentially as accurate on clear conversational English.
+
+The CTranslate2 conversions are published by ivrit-ai themselves (Apache-2.0)
+and, for English, under MIT.
 
 One caveat: the mlx-community conversions declare **no license of their own**.
 The upstream licenses above are permissive, and the conversions are
@@ -348,6 +455,35 @@ the one place the tool overwrites a file rather than bumping to `_2` — renamin
 labels is reversible by re-running diarization, and a stack of near-identical
 transcripts is worse than editing the one you have.
 
+## Hebrew in the terminal
+
+Many terminals cannot display right-to-left text: they draw Hebrew letters
+left to right in the order they are stored, so a sentence appears reversed.
+Every Windows console does this, as do VS Code's terminal, Warp, Ghostty,
+Alacritty, kitty and WezTerm. macOS Terminal, iTerm2 3.7 and newer, GNOME
+Terminal and Konsole display Hebrew correctly.
+
+On the terminals that cannot, the tool reorders Hebrew before printing it: the
+running transcription lines and the sample lines shown when naming speakers.
+It recognises the terminal from the environment variables it sets. The
+transcript file is never reordered; it is always written in normal order, which
+is what editors expect.
+
+To override the detection, set `TRANSCRIBE_BIDI`:
+
+```
+TRANSCRIBE_BIDI=on .venv/bin/python transcribe.py     # always reorder
+TRANSCRIBE_BIDI=off .venv/bin/python transcribe.py    # never reorder
+```
+
+`auto`, or leaving it unset, means detect. On Windows, set it first with
+`set TRANSCRIBE_BIDI=on` (Command Prompt) or `$env:TRANSCRIBE_BIDI = "on"`
+(PowerShell).
+
+One thing the tool cannot fix: a speaker name typed in Hebrew still looks
+reversed *while you type it* on such a terminal, because the terminal draws
+your keystrokes itself. The name is saved correctly.
+
 ## Limitations
 
 - **The model cannot identify anyone.** It separates voices; putting names to
@@ -370,12 +506,13 @@ transcripts is worse than editing the one you have.
 
 ## What runs locally
 
-All transcription and diarization runs on your Mac. Audio is never uploaded,
-and there is no inference API involved.
+All transcription and diarization runs on your computer. Audio is never
+uploaded, and there is no inference API involved.
 
 Network access is needed **once**, to download model weights from HuggingFace
-into `~/.cache/huggingface`. After that everything runs fully offline — you can
-verify this yourself by cutting the network, or by forcing it:
+into `~/.cache/huggingface`, plus the packages the installer fetches. After
+that everything runs fully offline. You can verify this yourself by cutting
+the network, or by forcing it:
 
 ```
 HF_HUB_OFFLINE=1 .venv/bin/python transcribe.py
@@ -404,15 +541,20 @@ already have.
 | `transcribe.py` | Prompts, ordering, error handling. No model code. |
 | `cli.py` | The no-prompt mode: flags, exit codes, the stdout result line |
 | `version.py` | The version `--capabilities` reports |
-| `profiles.py` | Which Whisper model goes with which language |
+| `profiles.py` | Which Whisper model goes with which language, per engine and device |
 | `paths.py` | Drag-and-drop path cleanup, output naming, ffmpeg check |
-| `transcription.py` | Running Whisper |
-| `audio_decoding.py` | Decoding audio for pyannote through ffmpeg, tolerating bad frames |
+| `transcription.py` | Running Whisper through the engine chosen for this machine |
+| `engines/` | The two Whisper engines (`mlx_engine.py`, `faster_whisper_engine.py`), choosing one (`selection.py`), the shared decoding settings (`decoding.py`), GPU detection (`device_plan.py`, `cuda_libraries.py`) |
+| `audio_decoding.py` | Decoding audio for pyannote and faster-whisper through ffmpeg, tolerating bad frames |
 | `diarization.py` | Running pyannote; merging speakers into segments |
 | `transcript_output.py` | Rendering and writing both transcript formats |
 | `speaker_names.py` | Replacing `SPEAKER_00` with real names |
 | `name_speakers.py` | Entry point for naming an existing transcript |
-| `tests/` | Unit tests for both modes; no model download |
+| `terminal_bidi.py` | Reordering Hebrew for terminals that cannot display right-to-left text |
+| `console_streams.py` | UTF-8 output on Windows when stdout or stderr is redirected |
+| `platform_hints.py` | Install advice that differs by operating system |
+| `install.py` | The installer for every platform; `setup.sh` wraps it |
+| `tests/` | Unit tests for both modes and both engines; no model download |
 
 Two details that look odd but are deliberate:
 
@@ -436,26 +578,43 @@ Two details that look odd but are deliberate:
 - **`condition_on_previous_text=False`** avoids Whisper's repetition-loop
   failure mode, where the decoder gets stuck emitting the same phrase for
   minutes on long recordings.
+- **Both engines use these settings.** They are defined once, in
+  `engines/decoding.py`, and passed to mlx-whisper and faster-whisper alike.
+  faster-whisper also gets `beam_size=1`, set in its engine because
+  mlx-whisper's call does not accept it: faster-whisper defaults to a beam
+  search of 5, and mlx-whisper decodes greedily, which a beam of 1 is. One
+  difference remains: when a segment falls back to sampling at a higher
+  temperature, faster-whisper keeps the best of 5 samples where mlx-whisper
+  takes one. faster-whisper's optional voice-activity filter stays off, as
+  mlx-whisper has none. faster-whisper is also handed audio decoded by the ffmpeg CLI the
+  way mlx-whisper decodes it, rather than through its own PyAV loader, so both
+  engines hear identical samples.
 - **`hallucination_silence_threshold=2.0` is currently inert.** mlx-whisper
   0.4.3 only consults it when `word_timestamps=True`, and unlike openai-whisper
-  it does not raise an error for the combination. Setting `word_timestamps=True`
-  would activate it, at the cost of per-word cross-attention alignment on every
-  segment — a meaningful slowdown on long files.
-- For difficult English audio — heavy accents, background noise, persistent
-  crosstalk — swap the English profile's repo for
-  `mlx-community/whisper-large-v3-mlx` (3 GB), which is slower but more robust.
+  it does not raise an error for the combination. faster-whisper 1.2.1 behaves
+  the same way. Setting `word_timestamps=True` would activate it, at the cost
+  of per-word cross-attention alignment on every segment, a meaningful slowdown
+  on long files.
+- For difficult English audio (heavy accents, background noise, persistent
+  crosstalk), swap the English profile's models in `profiles.py` for full
+  large-v3: `mlx-community/whisper-large-v3-mlx` (3 GB) for mlx-whisper, and
+  `Systran/faster-whisper-large-v3` (3 GB) for faster-whisper. Slower, but
+  more robust.
 
 ## Scope
 
 Transcription, optional speaker attribution, and naming those speakers. No
-summarization, no API calls, no CLI flags — interactive prompts only, with a
-single `TRANSCRIBE_LANG` environment override.
+summarization and no API calls. It runs interactively, or without prompts
+through the flags in [Scripting](#scripting). A few environment variables
+adjust it: `TRANSCRIBE_LANG`, `TRANSCRIBE_ENGINE` and `TRANSCRIBE_BIDI`, plus
+HuggingFace's own `HF_TOKEN` and cache variables.
 
 One language per run. A bilingual recording needs two passes, and neither will
 be right about the other half.
 
-There is no CI: the test path needs Apple Silicon hardware and multi-GB model
-downloads, which no hosted runner provides.
+There is no CI yet. The unit tests need neither Apple Silicon nor a model
+download, so a hosted runner could run them; an end-to-end transcription still
+needs multi-GB model downloads.
 
 ## License
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local audio transcription on Apple Silicon, optionally with speaker labels.
+"""Local audio transcription, optionally with speaker labels.
 
 The single entry point. Run it, answer four prompts, get a transcript written
 next to the input file:
@@ -15,7 +15,8 @@ Given any arguments, it runs without prompts instead (see cli.py):
 
 Everything below is orchestration only — prompts, ordering, and error
 handling. The work lives in dedicated modules: profiles.py (which model for
-which language), paths.py (input/output paths), transcription.py (Whisper),
+which language), paths.py (input/output paths), transcription.py and
+engines/ (Whisper: mlx-whisper on Apple Silicon, faster-whisper elsewhere),
 diarization.py (pyannote), transcript_output.py (rendering), speaker_names.py
 (putting real names on the labels).
 
@@ -30,6 +31,7 @@ import time
 import traceback
 
 import diarization
+from console_streams import use_utf8_when_redirected
 from diarization import extract_speaker_turns, label_segments, prompt_for_speaker_count
 from paths import build_output_path, prompt_for_audio_path, require_ffmpeg
 from profiles import prompt_for_profile
@@ -94,6 +96,7 @@ def transcribe_with_speakers(audio_path, profile, output_path, speaker_count):
 
 def main(argv=None):
     """Prompts with no arguments; flags-only, never prompting, with any."""
+    use_utf8_when_redirected()
     argv = sys.argv[1:] if argv is None else argv
     if argv:
         import cli

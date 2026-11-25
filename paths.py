@@ -15,6 +15,8 @@ import re
 import shutil
 import sys
 
+from platform_hints import ffmpeg_missing_message
+
 MAX_PROMPT_ATTEMPTS = 3
 
 
@@ -25,10 +27,7 @@ MAX_PROMPT_ATTEMPTS = 3
 def require_ffmpeg():
     """Exit early if ffmpeg is missing, rather than deep inside Whisper."""
     if shutil.which("ffmpeg") is None:
-        sys.exit(
-            "ffmpeg is required to decode audio but was not found on PATH.\n"
-            "Install it with:  brew install ffmpeg"
-        )
+        sys.exit(ffmpeg_missing_message())
 
 
 # --------------------------------------------------------------------------
@@ -43,20 +42,25 @@ def _strip_surrounding_quotes(raw):
     return raw, False
 
 
-def sanitize_path_input(raw):
+def sanitize_path_input(raw, platform_name=None):
     """Turn whatever the user pasted or dragged in into a usable path.
 
     Handles surrounding quotes, the backslash escaping Terminal adds on
     drag-and-drop, and ``~``. Returns the best candidate; if unescaping
     produced a path that does not exist but the literal one does, the literal
     one wins (filenames may legitimately contain backslashes).
+
+    On Windows a backslash is the path separator, not an escape, and Windows
+    terminals quote a dropped path instead of escaping it, so nothing is
+    unescaped there.
     """
+    platform_name = sys.platform if platform_name is None else platform_name
     text = raw.strip()
     text, was_quoted = _strip_surrounding_quotes(text)
     text = text.strip()
 
     candidates = [text]
-    if not was_quoted and "\\" in text:
+    if platform_name != "win32" and not was_quoted and "\\" in text:
         # Terminal escapes spaces, parens, ampersands... as \<char>.
         candidates.insert(0, re.sub(r"\\(.)", r"\1", text))
 

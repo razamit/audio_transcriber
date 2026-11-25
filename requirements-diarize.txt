@@ -1,4 +1,7 @@
-# Speaker diarization only (diarize.py). Install on top of requirements.txt.
+# Speaker diarization only. Install on top of requirements.txt; it serves both
+# transcription engines, since pyannote does not depend on either.
 # Pulls PyTorch Lightning, optuna, matplotlib and friends — roughly 2GB of
 # extra packages, which is why it is not in the base requirements.
+# On an NVIDIA machine, `install.py --with-diarization --gpu` installs a CUDA
+# build of torch and torchaudio first, so pip keeps it instead of the CPU build.
 pyannote.audio==4.0.7

@@ -1,1 +1,7 @@
-mlx-whisper==0.4.3
+# The transcription engine: mlx-whisper on Apple Silicon Macs, faster-whisper
+# (CTranslate2) everywhere else. The markers install exactly one of them.
+mlx-whisper==0.4.3; sys_platform == "darwin" and platform_machine == "arm64"
+faster-whisper==1.2.1; sys_platform != "darwin" or platform_machine != "arm64"
+
+# Reorders Hebrew for terminals that cannot display right-to-left text.
+python-bidi==0.6.12

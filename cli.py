@@ -29,7 +29,9 @@ import traceback
 from dataclasses import dataclass
 
 import diarization
+from engines.selection import engine_key_or_none
 from paths import build_output_path, describe_path_problem
+from platform_hints import ffmpeg_missing_message
 from profiles import PROFILE_ENV_VAR, PROFILES
 from transcription import announce_first_run_download
 from version import __version__
@@ -116,8 +118,10 @@ def diarization_installed():
 
 
 def capabilities():
+    """What this install can do. ``engine`` is null when no Whisper library is installed."""
     return {
         "diarization": diarization_installed(),
+        "engine": engine_key_or_none(),
         "languages": list(PROFILES),
         "version": __version__,
     }
@@ -158,11 +162,7 @@ def resolve_output_path(out, audio_path, with_speakers):
 def validate(args):
     """Turn parsed args into a request, or raise CliError with its exit code."""
     if shutil.which("ffmpeg") is None:
-        raise CliError(
-            "ffmpeg is required to decode audio but was not found on PATH.\n"
-            "Install it with:  brew install ffmpeg",
-            EXIT_NO_FFMPEG,
-        )
+        raise CliError(ffmpeg_missing_message(), EXIT_NO_FFMPEG)
 
     audio_path = os.path.abspath(os.path.expanduser(args.file))
     problem = describe_path_problem(audio_path)

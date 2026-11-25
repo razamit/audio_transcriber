@@ -21,6 +21,12 @@ import sys
 from collections import defaultdict
 
 from audio_decoding import decode_to_waveform
+from platform_hints import (
+    installer_command,
+    set_environment_variable_command,
+    venv_python_command,
+    venv_script_command,
+)
 
 # The community re-upload of pyannote's Community-1 pipeline. Functionally the
 # same CC-BY-4.0 pipeline as pyannote/speaker-diarization-community-1, but
@@ -51,34 +57,44 @@ UNKNOWN_SPEAKER = "UNKNOWN"
 # at import time and falls back to its bundled config.yaml if it is unset.
 os.environ.setdefault("PYANNOTE_METRICS_ENABLED", "false")
 
-INSTALL_HELP = """\
+
+def install_help(platform_name=None):
+    """What to run when the diarization extras are missing, for this platform."""
+    return f"""\
 Speaker labelling needs the diarization extras, which are not installed.
 
-They live in a separate requirements file because they pull PyTorch and friends
-— roughly 1.2GB on top of the base install — and plain transcription does not
+They live in a separate requirements file because they pull PyTorch and friends,
+roughly 1.2GB on top of the base install, and plain transcription does not
 need any of it. Install them with:
 
-    ./setup.sh --with-diarization
+    {installer_command(platform_name)} --with-diarization
 
 or directly:
 
-    .venv/bin/pip install -r requirements-diarize.txt
+    {venv_python_command(platform_name)} -m pip install -r requirements-diarize.txt
 """
 
-DOWNLOAD_HELP = f"""\
+
+def download_help(platform_name=None):
+    """What to do when the diarization model cannot be downloaded."""
+    return f"""\
 Could not download {DIARIZATION_REPO}.
 
 No account is needed for this model, so the usual cause is no network on the
 first run, or a rate limit on unauthenticated downloads. If it is a rate limit,
-a free HuggingFace token raises the ceiling — create one (type "Read") at
+a free HuggingFace token raises the ceiling. Create one (type "Read") at
 https://hf.co/settings/tokens and store it once:
 
-    .venv/bin/hf auth login
+    {venv_script_command("hf", platform_name)} auth login
 
-or export it for this shell:
+or set it for this terminal session:
 
-    export HF_TOKEN=hf_your_token_here
+    {set_environment_variable_command("HF_TOKEN", "hf_your_token_here", platform_name)}
 """
+
+
+INSTALL_HELP = install_help()
+DOWNLOAD_HELP = download_help()
 
 
 # --------------------------------------------------------------------------
@@ -103,20 +119,23 @@ def optional_hf_token():
     return env_token or get_token()
 
 
-def select_torch_device():
-    """Prefer Apple's Metal backend, fall back to CPU."""
-    import torch
+def select_torch_device(torch_module=None):
+    """Prefer an NVIDIA GPU, then Apple's Metal backend, then the CPU."""
+    if torch_module is None:
+        import torch as torch_module
 
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
+    if torch_module.cuda.is_available():
+        return torch_module.device("cuda")
+    if torch_module.backends.mps.is_available():
+        return torch_module.device("mps")
+    return torch_module.device("cpu")
 
 
 def load_diarization_pipeline(token):
     """Build the pyannote pipeline, moved onto the best available device.
 
-    MPS is preferred but not every pyannote op has a Metal kernel, so a
-    failure to move the pipeline falls back to CPU rather than dying.
+    CUDA or MPS is preferred, but not every pyannote op has a Metal kernel, so
+    a failure to move the pipeline falls back to CPU rather than dying.
     """
     import torch
     from pyannote.audio import Pipeline
@@ -177,7 +196,7 @@ def as_annotation(output):
             "Unexpected diarization output "
             f"({type(output).__name__}); this pyannote.audio version is not "
             "supported. Reinstall with: "
-            ".venv/bin/pip install -r requirements-diarize.txt"
+            f"{venv_python_command()} -m pip install -r requirements-diarize.txt"
         )
     return annotation
 

@@ -68,9 +68,10 @@ class ParserTests(unittest.TestCase):
 
 
 class CapabilitiesTests(unittest.TestCase):
-    def run_capabilities(self, available, argv=("--capabilities",)):
+    def run_capabilities(self, available, argv=("--capabilities",), engine="mlx"):
         stdout = io.StringIO()
         with mock.patch.object(cli.diarization, "diarization_is_available", return_value=available), \
+                mock.patch.object(cli, "engine_key_or_none", return_value=engine), \
                 contextlib.redirect_stdout(stdout):
             code = cli.run(list(argv), None, None)
         return code, stdout.getvalue()
@@ -80,8 +81,16 @@ class CapabilitiesTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(out.count("\n"), 1)
         self.assertEqual(json.loads(out), {
-            "diarization": True, "languages": ["he", "en"], "version": cli.__version__,
+            "diarization": True, "engine": "mlx", "languages": ["he", "en"],
+            "version": cli.__version__,
         })
+
+    def test_reports_the_faster_whisper_engine(self):
+        _, out = self.run_capabilities(False, engine="faster-whisper")
+        self.assertEqual(json.loads(out)["engine"], "faster-whisper")
+
+    def test_version_was_bumped_for_the_engine_field(self):
+        self.assertEqual(cli.__version__, "1.1.0")
 
     def test_reports_missing_diarization(self):
         _, out = self.run_capabilities(False, ("--capabilities", "--json"))
@@ -101,6 +110,8 @@ class CapabilitiesTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIs(json.loads(completed.stdout)["diarization"], False)
+        # Neither Whisper library is importable either: reported, not fatal.
+        self.assertIsNone(json.loads(completed.stdout)["engine"])
 
 
 class ValidationTests(ScratchFolderTestCase):
