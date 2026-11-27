@@ -198,7 +198,9 @@ stdout carries a single line: the transcript path, or with `--json`:
 Everything else, including Whisper's running output and model download
 progress, goes to stderr. A flag run never prompts, so the speaker-naming step
 is skipped. To add names afterwards, run `.venv/bin/python name_speakers.py`
-and give it the transcript when it asks.
+and give it the transcript when it asks, or pass the transcript as its
+argument (see [Naming the speakers](#naming-the-speakers)). The Claude Code
+plugin does this for you: it opens a window for the naming step.
 
 `--capabilities` prints
 `{"diarization": true, "engine": "mlx", "languages": ["he", "en"], "version": "1.1.0"}`.
@@ -263,6 +265,30 @@ and whether to label speakers. `TRANSCRIBE_LANG` set in your shell answers the
 language question. When the run ends Claude reports the transcript path, the
 time taken, the language and the number of speakers.
 
+After a run with speaker labels, the plugin opens a new terminal window on
+your screen, already running the naming prompt on the new transcript: it shows
+each speaker's longest lines and asks for a name, as the script does at the
+end of an interactive run. Claude only learns whether the window opened. Type
+the names there, then press Enter to close the window. How the window is
+opened:
+
+| System | How |
+|--------|-----|
+| macOS | Writes a small `.command` script into the plugin data folder and opens it in Terminal with `open -a Terminal`. The script deletes itself when it starts. This needs no Automation permission, unlike asking Terminal through AppleScript, which makes macOS ask once whether the app running Claude Code may control Terminal. |
+| Windows | Starts the naming script in a new console window (`CREATE_NEW_CONSOLE`). Hebrew shows the same way as in any Windows console (see [Hebrew in the terminal](#hebrew-in-the-terminal)). |
+| Linux | The first terminal it finds of `x-terminal-emulator`, `gnome-terminal`, `konsole`, `xfce4-terminal` and `xterm`, and only when `DISPLAY` or `WAYLAND_DISPLAY` is set. |
+
+Over SSH (`SSH_CONNECTION` set), with no display on Linux, with no terminal
+found, or when the launch fails, no window opens. Claude then gives you the
+naming command to paste into your own terminal instead.
+
+> **What has been run for real.** The macOS window: Terminal opened with the
+> naming prompt showing, for a throwaway transcript whose path had spaces, an
+> `@`, a single quote and Hebrew letters. The Windows and Linux windows have not
+> been opened on a real machine yet. Their commands are built from the Python,
+> Microsoft, Debian, GNOME, KDE, Xfce and xterm documentation and covered by
+> unit tests with fakes.
+
 The first `/transcribe` on a machine finds nothing installed. Claude says what
 would be downloaded (the base packages, 1.3 GB on disk on an Apple Silicon Mac
 because mlx-whisper brings PyTorch; speaker labels add about 1.2 GB;
@@ -278,6 +304,7 @@ Where things live:
 | The environment, plugin loaded with `claude --plugin-dir` from a clone | The clone's own `.venv`, when it exists |
 | Install log | `<data folder>/logs/install.log` |
 | Progress of the current or last run | `<data folder>/logs/last-run.log`, replaced by each run |
+| The script that opens the naming window on macOS | `<data folder>/naming/`, deleted as soon as Terminal runs it |
 | Transcripts | Next to the audio, as with the script |
 
 Claude gives you the log path when a run starts. Follow it with
@@ -291,15 +318,17 @@ Whisper prints every transcribed line as it goes, so `plugin_runner.py` writes
 that output to the log file and prints only a JSON summary, and the skill tells
 Claude not to open the transcript or the logs. If you ask Claude to summarise
 or quote the transcript, it reads the file then, and that text is sent to
-Anthropic like anything else you show Claude. Naming speakers stays in your own
-terminal: `name_speakers.py` asks questions, so Claude gives you the command
-instead of running it.
+Anthropic like anything else you show Claude. Naming the speakers has to show
+transcript lines, so it happens in the window the plugin opens on your screen,
+never in Claude's output: `plugin_runner.py name` reports only whether the
+window opened, how, and the fallback command.
 
 `plugin_runner.py` can be run by hand, which helps when something goes wrong:
 
 ```
 python3 plugin_runner.py status --data-dir /some/folder
 python3 plugin_runner.py run --data-dir /some/folder -- --file call.m4a --lang en
+python3 plugin_runner.py name --data-dir /some/folder -- --file call_speakers.txt
 ```
 
 ## How it works
@@ -576,9 +605,13 @@ To name a transcript produced earlier, without re-running either model:
 
 ```
 .venv/bin/python name_speakers.py
+.venv/bin/python name_speakers.py '/path/to/call_speakers.txt'
 ```
 
-It takes an existing `<name>_speakers.txt` and rewrites it the same way. This is
+It takes an existing `<name>_speakers.txt` and rewrites it the same way. With
+no argument it asks for the file. Given the file as an argument it asks
+nothing else first, and when it is done it waits for Enter before exiting, so
+a window opened just for it stays up long enough to read the result. This is
 the one place the tool overwrites a file rather than bumping to `_2` — renaming
 labels is reversible by re-running diarization, and a stack of near-identical
 transcripts is worse than editing the one you have.
@@ -682,8 +715,8 @@ already have.
 | `console_streams.py` | UTF-8 output on Windows when stdout or stderr is redirected |
 | `platform_hints.py` | Install advice that differs by operating system |
 | `install.py` | The installer for every platform; `setup.sh` wraps it |
-| `plugin_runner.py` | The one script the Claude Code skill calls: `status`, `install`, `run`, each printing one JSON object |
-| `claude_plugin/` | The runner's parts: which venv to use (`venv_location.py`), the status report (`status_report.py`), the install step (`install_step.py`), a transcription run that keeps transcript text off stdout (`transcription_run.py`), requirements change detection (`requirements_snapshot.py`), logs (`run_logs.py`), the injectable machine probes (`host_system.py`) |
+| `plugin_runner.py` | The one script the Claude Code skill calls: `status`, `install`, `run`, `name`, each printing one JSON object |
+| `claude_plugin/` | The runner's parts: which venv to use (`venv_location.py`), the status report (`status_report.py`), the install step (`install_step.py`), a transcription run that keeps transcript text off stdout (`transcription_run.py`), requirements change detection (`requirements_snapshot.py`), logs (`run_logs.py`), the injectable machine probes (`host_system.py`), opening the speaker-naming window (`naming_window.py`) with one command builder per OS (`window_commands.py`) |
 | `.claude-plugin/` | Claude Code plugin and marketplace manifests |
 | `skills/transcribe/SKILL.md` | The `/transcribe` command: instructions Claude follows |
 | `tests/` | Unit tests for both modes, both engines and the plugin runner; no model download |

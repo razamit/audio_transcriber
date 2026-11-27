@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Callable, Mapping, Tuple
+from typing import Callable, Mapping, Optional, Tuple
 
 REPO_FOLDER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Every Python the runner starts gets -B, so no __pycache__ is written into the
@@ -30,6 +30,9 @@ class HostSystem:
     environ: Mapping[str, str]
     which: Callable
     run_process: Callable  # subprocess.run-compatible
+    # subprocess.Popen-compatible, for a window that outlives the runner. None
+    # means "cannot start one", so a test that leaves it out never opens a window.
+    start_process: Optional[Callable] = None
 
 
 def real_host_system():
@@ -40,6 +43,7 @@ def real_host_system():
         environ=os.environ,
         which=shutil.which,
         run_process=subprocess.run,
+        start_process=subprocess.Popen,
     )
 
 

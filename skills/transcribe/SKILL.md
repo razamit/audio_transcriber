@@ -23,6 +23,7 @@ Everything goes through one script, which prints one JSON object per call. Run i
 python3 "${CLAUDE_PLUGIN_ROOT}/plugin_runner.py" status --data-dir "${CLAUDE_PLUGIN_DATA}"
 python3 "${CLAUDE_PLUGIN_ROOT}/plugin_runner.py" install --data-dir "${CLAUDE_PLUGIN_DATA}" [--with-diarization] [--gpu]
 python3 "${CLAUDE_PLUGIN_ROOT}/plugin_runner.py" run --data-dir "${CLAUDE_PLUGIN_DATA}" -- --file '<path>' --lang <he|en> [--speakers auto|N]
+python3 "${CLAUDE_PLUGIN_ROOT}/plugin_runner.py" name --data-dir "${CLAUDE_PLUGIN_DATA}" -- --file '<transcript path>'
 ```
 
 ## Privacy comes first
@@ -94,4 +95,13 @@ On failure give `message` and what the exit code means:
 
 An object with an `error` field (`not_installed`, `usage`) comes from the script itself, not from a transcription: show its `message`, and for `not_installed` go back to step 3.
 
-After a success you may add one line: they can ask you for a summary of the transcript (which sends its text to Anthropic), or put names on the speaker labels themselves. `name_speakers.py` asks questions, so it must run in their own terminal, not through you; give them the command, with `venv_python` from `status`: `"<venv_python>" "${CLAUDE_PLUGIN_ROOT}/name_speakers.py"`.
+## 7. Naming the speakers
+
+After a success where `result.speakers` is not null and is above 0, run `name` on `result.output`, quoting the path the same way as in step 1. It returns at once; do not run it in the background. It opens a terminal window on the user's screen that shows a few lines per speaker and asks for their names. You never see those lines, and you must not read the transcript to help.
+
+- `opened` true: tell the user a window has opened where they can name the speakers, and that the sample lines it shows stay on their machine.
+- `opened` false: the window could not be opened (`reason` says why, for example `remote_session` or `no_display`). Give them `manual_command` to paste into their own terminal; it asks the same questions there. If `manual_command` is null, skip naming.
+
+Do not wait for the naming to finish or ask whether it went well; the window handles it.
+
+After a success you may add one line: they can ask you for a summary of the transcript, which sends its text to Anthropic.
