@@ -1,0 +1,15 @@
+{
+  "name": "audio-transcriber",
+  "description": "audio-transcriber: local Hebrew and English transcription with Whisper, from a /transcribe command.",
+  "owner": {
+    "name": "Amit Raz",
+    "url": "https://github.com/razamit"
+  },
+  "plugins": [
+    {
+      "name": "audio-transcriber",
+      "source": "./",
+      "description": "Transcribe Hebrew or English audio on your own machine with Whisper, optionally with speaker labels."
+    }
+  ]
+}

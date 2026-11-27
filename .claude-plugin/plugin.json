@@ -1,0 +1,9 @@
+{
+  "name": "audio-transcriber",
+  "displayName": "audio-transcriber",
+  "description": "Transcribe Hebrew or English audio on your own machine with Whisper, optionally with speaker labels. Type /transcribe <audio file>.",
+  "author": { "name": "Amit Raz", "url": "https://github.com/razamit" },
+  "homepage": "https://github.com/razamit/audio_transcriber",
+  "repository": "https://github.com/razamit/audio_transcriber",
+  "license": "MIT"
+}

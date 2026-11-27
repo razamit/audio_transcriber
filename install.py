@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Create the local environment for transcribe.py, on macOS, Linux or Windows.
 
-    python3 install.py [--with-diarization] [--gpu]     (macOS, Linux)
-    py install.py [--with-diarization] [--gpu]          (Windows)
+    python3 install.py [--with-diarization] [--gpu] [--venv-dir PATH]   (macOS, Linux)
+    py install.py [--with-diarization] [--gpu] [--venv-dir PATH]        (Windows)
 
 setup.sh runs this with the same arguments, so `./setup.sh` keeps working.
 
-It checks Python and ffmpeg, creates .venv next to this file, and installs
+It checks Python and ffmpeg, creates .venv next to this file (or the folder
+--venv-dir names, which the Claude Code plugin uses because its copy of this
+folder is replaced on every update), and installs
 requirements.txt (whose markers pick mlx-whisper or faster-whisper for the
 machine). --with-diarization adds pyannote for speaker labels. --gpu adds the
 NVIDIA libraries faster-whisper needs to use a CUDA GPU, and with
@@ -59,7 +61,14 @@ def parse_options(argv):
                         help="also install speaker labelling (pyannote, about 2GB)")
     parser.add_argument("--gpu", action="store_true",
                         help="NVIDIA GPU support on Windows or Linux")
+    parser.add_argument("--venv-dir", type=absolute_folder, metavar="PATH",
+                        help="create the environment here instead of .venv next to install.py")
     return parser.parse_args(argv)
+
+
+def absolute_folder(value):
+    """--venv-dir as an absolute path, so it means the same folder whatever cwd pip runs in."""
+    return os.path.abspath(os.path.expanduser(value))
 
 
 # --------------------------------------------------------------------------
@@ -125,10 +134,15 @@ def new_python_warning(version_info, platform_name, machine):
 # Commands
 # --------------------------------------------------------------------------
 
-def venv_python_path(project_folder, platform_name):
+def python_in_venv(venv_folder, platform_name):
+    """The Python inside a virtual environment folder, wherever that folder is."""
     if platform_name == "win32":
-        return os.path.join(project_folder, VENV_FOLDER, "Scripts", "python.exe")
-    return os.path.join(project_folder, VENV_FOLDER, "bin", "python")
+        return os.path.join(venv_folder, "Scripts", "python.exe")
+    return os.path.join(venv_folder, "bin", "python")
+
+
+def venv_python_path(project_folder, platform_name):
+    return python_in_venv(os.path.join(project_folder, VENV_FOLDER), platform_name)
 
 
 def pip_install(python, *arguments):
@@ -159,8 +173,8 @@ def build_install_commands(python, with_diarization, gpu):
     return commands
 
 
-def build_venv_command(system_python):
-    return [system_python, "-m", "venv", VENV_FOLDER]
+def build_venv_command(system_python, venv_folder=VENV_FOLDER):
+    return [system_python, "-m", "venv", venv_folder]
 
 
 def run_commands(commands, runner=subprocess.check_call, folder=PROJECT_FOLDER):
@@ -183,14 +197,21 @@ def first_problem(options, platform_name, which=shutil.which):
 
 
 def closing_message(options, platform_name):
-    run_line = f"    {venv_python_command(platform_name)} transcribe.py"
+    venv_dir = getattr(options, "venv_dir", None)
+    if venv_dir:
+        run_line = (f"    {python_in_venv(venv_dir, platform_name)} "
+                    f"{os.path.join(PROJECT_FOLDER, 'transcribe.py')}")
+        rerun_suffix = f" --venv-dir {venv_dir}"
+    else:
+        run_line = f"    {venv_python_command(platform_name)} transcribe.py"
+        rerun_suffix = ""
     lines = ["", "Done. Run the transcriber with:", run_line]
     if options.with_diarization:
         lines += ["", "Diarization installed. No account or token is needed; the model "
                       "downloads on first run."]
     else:
         lines += ["", "For speaker labels (who said what), re-run as:",
-                  f"    {installer_command(platform_name)} --with-diarization"]
+                  f"    {installer_command(platform_name)} --with-diarization{rerun_suffix}"]
     return "\n".join(lines)
 
 
@@ -205,9 +226,10 @@ def main(argv=None, platform_name=None):
     if warning:
         print(warning)
 
-    python = venv_python_path(PROJECT_FOLDER, platform_name)
+    venv_folder = options.venv_dir or VENV_FOLDER
+    python = python_in_venv(os.path.join(PROJECT_FOLDER, venv_folder), platform_name)
     try:
-        run_commands([build_venv_command(sys.executable)])
+        run_commands([build_venv_command(sys.executable, venv_folder)])
         run_commands(build_install_commands(python, options.with_diarization, options.gpu))
     except subprocess.CalledProcessError as exc:
         sys.exit(f"\nInstall step failed (exit code {exc.returncode}): {' '.join(exc.cmd)}")

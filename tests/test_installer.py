@@ -1,10 +1,13 @@
 """install.py: the checks and the pip commands it builds. Nothing is installed."""
 
+import contextlib
+import io
 import os
 import subprocess
 import sys
 import types
 import unittest
+from unittest import mock
 
 import install
 
@@ -110,6 +113,61 @@ class InstallCheckTests(unittest.TestCase):
     def test_arguments(self):
         options = install.parse_options(["--with-diarization", "--gpu"])
         self.assertEqual((options.with_diarization, options.gpu), (True, True))
+        self.assertIsNone(options.venv_dir)
+
+
+class VenvFolderOptionTests(unittest.TestCase):
+    """--venv-dir: the plugin's environment lives outside the project folder."""
+
+    def test_venv_dir_is_made_absolute(self):
+        options = install.parse_options(["--venv-dir", "some/venv"])
+        self.assertEqual(options.venv_dir, os.path.abspath("some/venv"))
+
+    def test_python_inside_any_venv_folder(self):
+        self.assertEqual(install.python_in_venv("/data/venv", "linux"),
+                         os.path.join("/data/venv", "bin", "python"))
+        self.assertEqual(install.python_in_venv("D:/data/venv", "win32"),
+                         os.path.join("D:/data/venv", "Scripts", "python.exe"))
+
+    def test_venv_command_takes_the_folder(self):
+        self.assertEqual(install.build_venv_command("py3", "/data/venv"),
+                         ["py3", "-m", "venv", "/data/venv"])
+
+    def test_closing_message_names_the_python_in_the_venv_dir(self):
+        options = types.SimpleNamespace(with_diarization=False, gpu=False, venv_dir="/data/venv")
+        message = install.closing_message(options, "darwin")
+        transcribe = os.path.join(install.PROJECT_FOLDER, "transcribe.py")
+        self.assertIn(f"{os.path.join('/data/venv', 'bin', 'python')} {transcribe}", message)
+        self.assertIn("./setup.sh --with-diarization --venv-dir /data/venv", message)
+        self.assertNotIn(".venv/bin/python", message)
+
+    def test_default_closing_message_is_unchanged(self):
+        with_dir = types.SimpleNamespace(with_diarization=False, gpu=False, venv_dir=None)
+        without_dir = types.SimpleNamespace(with_diarization=False, gpu=False)
+        self.assertEqual(install.closing_message(with_dir, "darwin"),
+                         install.closing_message(without_dir, "darwin"))
+
+    def run_main(self, argv):
+        ran = []
+        with mock.patch.object(install, "first_problem", return_value=None), \
+                mock.patch.object(install, "new_python_warning", return_value=None), \
+                mock.patch.object(install, "run_commands", side_effect=ran.extend), \
+                contextlib.redirect_stdout(io.StringIO()) as printed:
+            install.main(argv, platform_name="linux")
+        return ran, printed.getvalue()
+
+    def test_main_builds_the_venv_and_installs_into_the_venv_dir(self):
+        ran, printed = self.run_main(["--venv-dir", "/data/venv"])
+        python = os.path.join("/data/venv", "bin", "python")
+        self.assertEqual(ran[0], [sys.executable, "-m", "venv", "/data/venv"])
+        self.assertEqual(ran[1], [python, "-m", "pip", "install", "--upgrade", "pip", "--quiet"])
+        self.assertEqual(ran[2], [python, "-m", "pip", "install", "-r", "requirements.txt"])
+        self.assertIn(python, printed)
+
+    def test_main_without_venv_dir_still_uses_dot_venv(self):
+        ran, _ = self.run_main([])
+        self.assertEqual(ran[0], [sys.executable, "-m", "venv", ".venv"])
+        self.assertEqual(ran[1][0], install.venv_python_path(install.PROJECT_FOLDER, "linux"))
 
 
 @unittest.skipUnless(sys.platform == "darwin", "the refusal tested here is Mac-specific")

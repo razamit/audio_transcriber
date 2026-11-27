@@ -78,6 +78,12 @@ installs `requirements.txt`, whose markers pick `mlx-whisper` on Apple Silicon
 and `faster-whisper` everywhere else. The `--with-diarization` flag adds
 `pyannote.audio` on top.
 
+`--venv-dir PATH` creates the environment in that folder instead of `.venv`;
+the requirements files are still read from the project folder. The
+[Claude Code plugin](#claude-code-plugin) uses it to keep its environment
+outside the plugin folder, which Claude Code replaces on every update. Without
+the flag nothing changes.
+
 `--with-diarization` is the main decision at setup time. Speaker labelling
 needs PyTorch, which is **~1.2 GB** of dependencies that plain transcription
 never touches, so it is kept separate rather than imposed on everyone. You can
@@ -212,6 +218,88 @@ Tests cover both modes and both engines, and need no model download:
 
 ```
 .venv/bin/python -m unittest discover -s tests -t .
+```
+
+## Claude Code plugin
+
+This repo is also a [Claude Code](https://code.claude.com) plugin, so you can
+transcribe from inside a Claude Code session by typing `/transcribe` and a
+file. Install it from GitHub with two commands in Claude Code:
+
+```
+/plugin marketplace add razamit/audio_transcriber
+/plugin install audio-transcriber@audio-transcriber
+```
+
+The plugin keeps its own environment, separate from the `.venv` of any clone
+you already have, so the first `/transcribe` offers to install it. Model
+weights are shared with the clone through `~/.cache/huggingface` and are not
+downloaded again.
+
+Do not add a clone that has a `.venv` as a local marketplace
+(`/plugin marketplace add /path/to/audio_transcriber`). Claude Code copies the
+whole folder into its plugin cache on install and on every update, `.venv`
+included, which was 1.5 GB per copy when tried. To run the plugin straight
+from a clone, with that clone's `.venv` and no copy, start Claude Code with:
+
+```
+claude --plugin-dir /path/to/audio_transcriber
+```
+
+Usage:
+
+```
+/transcribe ~/Downloads/call.m4a
+/transcribe ~/Downloads/call.m4a he
+/transcribe ~/Downloads/call.m4a en speakers
+/transcribe ~/Downloads/call.m4a he speakers 3
+/transcribe ~/Downloads/call.m4a en nospeakers
+```
+
+You can also drag a file into the terminal after `/transcribe `. Whatever the
+command leaves out, Claude asks: Hebrew or English (never guessed, for the
+reason in [Notes on the transcription settings](#notes-on-the-transcription-settings)),
+and whether to label speakers. `TRANSCRIBE_LANG` set in your shell answers the
+language question. When the run ends Claude reports the transcript path, the
+time taken, the language and the number of speakers.
+
+The first `/transcribe` on a machine finds nothing installed. Claude says what
+would be downloaded (the base packages, 1.3 GB on disk on an Apple Silicon Mac
+because mlx-whisper brings PyTorch; speaker labels add about 1.2 GB;
+each language's Whisper model, 1.6 to 3 GB, comes on its first transcription)
+and installs only after you say yes. With an NVIDIA GPU on Windows or Linux it
+installs the GPU support too.
+
+Where things live:
+
+| What | Where |
+|------|-------|
+| The environment, plugin installed from GitHub | `~/.claude/plugins/data/<plugin id>/venv`, which survives plugin updates |
+| The environment, plugin loaded with `claude --plugin-dir` from a clone | The clone's own `.venv`, when it exists |
+| Install log | `<data folder>/logs/install.log` |
+| Progress of the current or last run | `<data folder>/logs/last-run.log`, replaced by each run |
+| Transcripts | Next to the audio, as with the script |
+
+Claude gives you the log path when a run starts. Follow it with
+`tail -f '<log path>'` on macOS and Linux, or `Get-Content -Wait '<log path>'`
+in PowerShell. When a plugin update changes the requirements files, the next
+`/transcribe` offers to update the environment.
+
+**Privacy.** The audio is transcribed on your computer and never uploaded. By
+default Claude sees only paths, timings and counts, not the transcript:
+Whisper prints every transcribed line as it goes, so `plugin_runner.py` writes
+that output to the log file and prints only a JSON summary, and the skill tells
+Claude not to open the transcript or the logs. If you ask Claude to summarise
+or quote the transcript, it reads the file then, and that text is sent to
+Anthropic like anything else you show Claude. Naming speakers stays in your own
+terminal: `name_speakers.py` asks questions, so Claude gives you the command
+instead of running it.
+
+`plugin_runner.py` can be run by hand, which helps when something goes wrong:
+
+```
+python3 plugin_runner.py status --data-dir /some/folder
+python3 plugin_runner.py run --data-dir /some/folder -- --file call.m4a --lang en
 ```
 
 ## How it works
@@ -594,7 +682,11 @@ already have.
 | `console_streams.py` | UTF-8 output on Windows when stdout or stderr is redirected |
 | `platform_hints.py` | Install advice that differs by operating system |
 | `install.py` | The installer for every platform; `setup.sh` wraps it |
-| `tests/` | Unit tests for both modes and both engines; no model download |
+| `plugin_runner.py` | The one script the Claude Code skill calls: `status`, `install`, `run`, each printing one JSON object |
+| `claude_plugin/` | The runner's parts: which venv to use (`venv_location.py`), the status report (`status_report.py`), the install step (`install_step.py`), a transcription run that keeps transcript text off stdout (`transcription_run.py`), requirements change detection (`requirements_snapshot.py`), logs (`run_logs.py`), the injectable machine probes (`host_system.py`) |
+| `.claude-plugin/` | Claude Code plugin and marketplace manifests |
+| `skills/transcribe/SKILL.md` | The `/transcribe` command: instructions Claude follows |
+| `tests/` | Unit tests for both modes, both engines and the plugin runner; no model download |
 
 Two details that look odd but are deliberate:
 
@@ -644,8 +736,9 @@ Two details that look odd but are deliberate:
 ## Scope
 
 Transcription, optional speaker attribution, and naming those speakers. No
-summarization and no API calls. It runs interactively, or without prompts
-through the flags in [Scripting](#scripting). A few environment variables
+summarization and no API calls. It runs interactively, without prompts
+through the flags in [Scripting](#scripting), or from Claude Code through the
+[plugin](#claude-code-plugin). A few environment variables
 adjust it: `TRANSCRIBE_LANG`, `TRANSCRIBE_ENGINE` and `TRANSCRIBE_BIDI`, plus
 HuggingFace's own `HF_TOKEN` and cache variables.
 
